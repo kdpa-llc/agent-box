@@ -16,17 +16,17 @@ Install agent-box from https://github.com/kdpa-llc/agent-box by following the In
 
 The agent does the install and asks you where to add its skill.
 
-**By hand:** run these two commands in a terminal. `setup` asks you the same question.
+**By hand:** run these two commands in a terminal. `setup` asks you the same question. npm 12 refuses installs from GitHub unless you pass `--allow-git=root`, which allows only this package.
 
 ```sh
-npm install -g github:kdpa-llc/agent-box
+npm install -g --allow-git=root github:kdpa-llc/agent-box
 agent-box setup
 ```
 
 > **Agents doing the install:**
 > 1. Check the Mac meets the requirements above. If it doesn't, tell the user and stop.
 > 2. Ask the user where to add the `agent-box` skill; it's how agents learn to use the box. The defaults are the Claude Code skills folder (`$CLAUDE_CONFIG_DIR/skills`, or `~/.claude/skills` when that's unset) and `~/.agents/skills`, which Codex and other agents read. They may instead name other folders, or say none.
-> 3. Run `npm install -g github:kdpa-llc/agent-box`. Then run `agent-box setup` with `--skills-dir <folder>` once for each folder they named, `--no-skills` for none, or no option for the defaults. The first setup takes about 3 minutes.
+> 3. Run `npm install -g --allow-git=root github:kdpa-llc/agent-box`. Then run `agent-box setup` with `--skills-dir <folder>` once for each folder they named, `--no-skills` for none, or no option for the defaults. The first setup takes about 3 minutes.
 > 4. Tell the user what setup printed, and that new agent sessions will know the box.
 
 `agent-box setup` is safe to run again. It:
