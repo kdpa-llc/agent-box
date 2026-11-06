@@ -1,0 +1,5 @@
+box
+node_modules/
+*.tgz
+.playwright-cli/
+__pycache__/
