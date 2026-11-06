@@ -1,0 +1,45 @@
+{
+  "name": "@kdpa-llc/agent-box",
+  "version": "0.1.0",
+  "description": "A shared Linux desktop with Chromium and a password vault for AI agents on a Mac. Agents drive it with playwright-cli; you watch and take over from your phone.",
+  "license": "MIT",
+  "bin": {
+    "agent-box": "agent-box"
+  },
+  "files": [
+    "agent-box",
+    "Containerfile",
+    "entrypoint.sh",
+    "box-quit-browser",
+    "box-vault",
+    "box-door.py",
+    "agent-box-door.plist",
+    "desktop/",
+    "skills/"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "keywords": [
+    "agents",
+    "browser",
+    "computer-use",
+    "playwright",
+    "claude-code",
+    "codex",
+    "novnc",
+    "keepassxc"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kdpa-llc/agent-box.git"
+  },
+  "homepage": "https://github.com/kdpa-llc/agent-box#readme",
+  "bugs": {
+    "url": "https://github.com/kdpa-llc/agent-box/issues"
+  },
+  "private": true
+}

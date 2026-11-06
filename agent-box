@@ -1,0 +1,326 @@
+#!/bin/bash
+# agent-box: start, stop and use the shared agent box, one Linux desktop with
+# Chromium that AI agents drive and a person can watch and take over.
+# The box stops by itself after BOX_IDLE_MINUTES with no viewer and no browser
+# control traffic, so `agent-box up` is safe to call before every use.
+set -euo pipefail
+
+NAME=${BOX_NAME:-agent-box}   # BOX_NAME only for tests on a second box
+VOLUME=agent-box-data
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+CDP=http://127.0.0.1:9222
+VIEW_LOCAL=http://127.0.0.1:6080/
+DOOR=local.agent-box.door
+OLD_DOOR=com.rafael.agent-box-door   # label used by the first installs
+DOOR_PLIST="$HOME/Library/LaunchAgents/$DOOR.plist"
+TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+SKILL="$HERE/skills/agent-box"
+SKILL_DIRS=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" "$HOME/.agents/skills")   # Claude Code; Codex and other agents
+
+# The image tag is a hash of the files it's built from, so an update rebuilds it.
+BUILD_FILES=(Containerfile entrypoint.sh box-quit-browser box-vault desktop/tint2rc desktop/agent-box-passwords.desktop desktop/keepassxc.ini)
+IMAGE="agent-box:$(cd "$HERE" && cat "${BUILD_FILES[@]}" | shasum | cut -c1-12)"
+
+# With the front door on (agent-box door on), it owns 6080 and the box's viewer moves to 6090.
+door_on() {
+  launchctl print "gui/$(id -u)/$DOOR" >/dev/null 2>&1 || launchctl print "gui/$(id -u)/$OLD_DOOR" >/dev/null 2>&1
+}
+
+state() {
+  container inspect "$NAME" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["status"]["state"])' 2>/dev/null || echo absent
+}
+running() { [ "$(state)" = running ]; }
+
+need_box() { running || { echo "agent-box: not running (run 'agent-box up')" >&2; exit 1; }; }
+vault() { container exec -u agent "$NAME" box-vault "$@"; }
+
+ensure_system() {
+  container system status >/dev/null 2>&1 || container system start --disable-kernel-install >/dev/null
+}
+
+# Phone viewer address, only once it's published on the tailnet (see README).
+view_tailnet() {
+  "$TS" serve status 2>/dev/null | grep -q ':8443' || return 1
+  local host
+  host=$("$TS" status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null) || return 1
+  echo "https://$host:8443/"
+}
+
+info() {
+  echo "agent-box: running"
+  echo "  browser control (CDP): $CDP"
+  echo "  viewer on this Mac:    $VIEW_LOCAL"
+  local t
+  if t=$(view_tailnet); then echo "  viewer from phone:     $t (Tailscale)"
+  else echo "  viewer from phone:     not published (see $HERE/README.md)"; fi
+  echo "  stops after ${BOX_IDLE_MINUTES:-20} min idle; 'agent-box down' stops it now"
+}
+
+case "${1:-help}" in
+  setup)
+    # One-time install on this Mac; safe to re-run, for example after an update.
+    shift; skills=1; dirs=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --skills-dir) dirs+=("${2:?--skills-dir needs a folder}"); shift 2 ;;
+        --no-skills) skills=0; shift ;;
+        *) echo "usage: agent-box setup [--skills-dir DIR]... [--no-skills]" >&2; exit 2 ;;
+      esac
+    done
+    [ "$(uname -sm)" = "Darwin arm64" ] || { echo "agent-box: needs a Mac with Apple silicon" >&2; exit 1; }
+    [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ] || { echo "agent-box: needs macOS 26 or later" >&2; exit 1; }
+    if [ "$skills" = 1 ] && [ ${#dirs[@]} -eq 0 ]; then
+      dirs=("${SKILL_DIRS[@]}")
+      # Run by a person in a terminal: ask where the skill goes. Agents pass flags instead.
+      if [ -t 0 ] && [ -t 1 ]; then
+        echo "Agents learn to use the box from a skill. It goes in these folders by default:"
+        printf '  %s\n' "${dirs[@]}"
+        printf 'Add it there? Press Enter for yes, type n for no, or type other folders: '
+        read -r answer || answer=""
+        case "$answer" in
+          ""|y|Y|yes) ;;
+          n|N|no) skills=0 ;;
+          *) read -r -a dirs <<< "$answer"; dirs=("${dirs[@]/#\~/$HOME}") ;;
+        esac
+      fi
+    fi
+    if ! command -v container >/dev/null; then
+      command -v brew >/dev/null || { echo "agent-box: install Homebrew first, or Apple's container from https://github.com/apple/container/releases" >&2; exit 1; }
+      echo "agent-box: installing Apple's container tool (Homebrew)"
+      brew install container
+    fi
+    if ! command -v playwright-cli >/dev/null; then
+      echo "agent-box: installing playwright-cli (npm)"
+      npm install -g @playwright/cli@latest
+    fi
+    container system status >/dev/null 2>&1 || container system start --enable-kernel-install
+    if ! container image inspect "$IMAGE" >/dev/null 2>&1; then
+      echo "agent-box: building the box image (about 3 minutes; log in /tmp/agent-box-build.log)"
+      "$0" build >/tmp/agent-box-build.log 2>&1 || { tail -n 20 /tmp/agent-box-build.log >&2; exit 1; }
+    fi
+    if [ "$skills" = 1 ]; then
+      for d in "${dirs[@]}"; do
+        if [ -e "$d/agent-box" ] && [ ! -L "$d/agent-box" ]; then
+          echo "agent-box: skipped $d: it already has an agent-box folder that isn't a link" >&2; continue
+        fi
+        mkdir -p "$d"; ln -sfn "$SKILL" "$d/agent-box"
+        echo "agent-box: skill linked in $d"
+      done
+    fi
+    if [ "$skills" = 1 ]; then echo "agent-box: ready. New agent sessions find the 'agent-box' skill. Watch the box at $VIEW_LOCAL"
+    else echo "agent-box: ready, without the skill: point agents at $SKILL/SKILL.md. Watch the box at $VIEW_LOCAL"; fi
+    echo "  For the phone viewer and password vault, see $HERE/README.md" ;;
+  uninstall)
+    # Undo setup. --all also deletes the image and the box's storage (logins and password vault).
+    shift; all=0; dirs=("${SKILL_DIRS[@]}")
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --all) all=1; shift ;;
+        --skills-dir) dirs+=("${2:?--skills-dir needs a folder}"); shift 2 ;;
+        *) echo "usage: agent-box uninstall [--skills-dir DIR]... [--all]" >&2; exit 2 ;;
+      esac
+    done
+    for d in "${dirs[@]}"; do
+      [ -L "$d/agent-box" ] && rm "$d/agent-box" && echo "agent-box: removed the skill from $d"
+    done
+    door_on && "$0" door off
+    "$0" off
+    if [ "$all" = 1 ]; then
+      container system start --disable-kernel-install >/dev/null 2>&1 || true
+      for i in $(container image list -q 2>/dev/null | grep '^agent-box:' || true); do container image delete "$i" >/dev/null 2>&1 || true; done
+      container volume delete "$VOLUME" >/dev/null 2>&1 || true
+      container system stop >/dev/null 2>&1 || true
+      echo "agent-box: deleted the image and the box's storage"
+    fi
+    echo "agent-box: uninstalled. Finish with: npm rm -g @kdpa-llc/agent-box" ;;
+  up)
+    ensure_system
+    if ! running; then
+      # A stopped box that was not cleaned up yet would block the name.
+      [ "$(state)" != absent ] && container rm "$NAME" >/dev/null 2>&1 || true
+      if ! container image inspect "$IMAGE" >/dev/null 2>&1; then
+        echo "agent-box: building the image first (first run or update, about 3 minutes)" >&2
+        "$0" build >/tmp/agent-box-build.log 2>&1 || { tail -n 20 /tmp/agent-box-build.log >&2; exit 1; }
+      fi
+      container volume inspect "$VOLUME" >/dev/null 2>&1 || container volume create -s 4G "$VOLUME" >/dev/null
+      container run -d --rm --name "$NAME" --init \
+        -m "${BOX_MEMORY:-2G}" -c "${BOX_CPUS:-2}" --shm-size 1G \
+        -e IDLE_MINUTES="${BOX_IDLE_MINUTES:-20}" \
+        -e SCREEN_WIDTH="${BOX_WIDTH:-1280}" -e SCREEN_HEIGHT="${BOX_HEIGHT:-800}" \
+        -v "$VOLUME":/data \
+        -p "127.0.0.1:$(door_on && echo 6090 || echo 6080):6080" -p 127.0.0.1:9222:9223 \
+        "$IMAGE" >/tmp/agent-box-run.log 2>&1 || { cat /tmp/agent-box-run.log >&2; exit 1; }
+    fi
+    for _ in $(seq 120); do curl -sf -m 1 "$CDP/json/version" >/dev/null && break; sleep 0.5; done
+    curl -sf -m 2 "$CDP/json/version" >/dev/null || { echo "agent-box: browser did not come up; see 'agent-box logs'" >&2; exit 1; }
+    info ;;
+  down)
+    if running; then
+      # Quit Chromium cleanly first; the container's stop signal would kill it unsaved.
+      container exec "$NAME" box-quit-browser >/dev/null 2>&1 || true
+      container stop -t 15 "$NAME" >/dev/null
+    fi
+    for _ in $(seq 20); do [ "$(state)" = absent ] && break; sleep 0.5; done
+    echo "agent-box: stopped" ;;
+  status)
+    if running; then info; container stats --no-stream "$NAME" 2>/dev/null || true
+    else echo "agent-box: stopped (run 'agent-box up')"; fi ;;
+  url)
+    echo "$VIEW_LOCAL"; view_tailnet || true ;;
+  shot)
+    # Screenshot of the whole desktop, for when the page alone is not enough.
+    out="${2:-/tmp/agent-box-$(date +%Y%m%d-%H%M%S).png}"
+    container exec "$NAME" sh -c 'DISPLAY=:1 scrot -o /tmp/shot.png'
+    container exec "$NAME" cat /tmp/shot.png > "$out"; echo "$out" ;;
+  x)
+    # Raw mouse/keyboard on the desktop, e.g. `agent-box x mousemove 640 400 click 1`.
+    shift; container exec "$NAME" env DISPLAY=:1 xdotool "$@" ;;
+  exec)
+    shift; container exec "$NAME" "$@" ;;
+  logs)
+    container logs "$NAME" ;;
+  build)
+    ensure_system
+    container build -t "$IMAGE" -f "$HERE/Containerfile" "$HERE"
+    # The build cache takes ~4.5 GB; drop it, older builds and unused layers.
+    container builder stop >/dev/null 2>&1 || true
+    container builder delete >/dev/null 2>&1 || true
+    for i in $(container image list -q 2>/dev/null | grep '^agent-box:' || true); do
+      [ "$i" = "$IMAGE" ] || container image delete "$i" >/dev/null 2>&1 || true
+    done
+    container image prune >/dev/null 2>&1 || true ;;
+  door)
+    # Front door: always-on 15 MB helper on 6080 that starts the box when the
+    # viewer address is opened and shows a "starting" page meanwhile.
+    agents="$HOME/Library/LaunchAgents"
+    case "${2:-}" in
+      on)
+        was_on=0; door_on && was_on=1
+        for l in "$OLD_DOOR" "$DOOR"; do launchctl bootout "gui/$(id -u)/$l" 2>/dev/null || true; done
+        rm -f "$agents/$OLD_DOOR.plist"
+        mkdir -p "$agents" "$HOME/Library/Logs"
+        sed -e "s|__HERE__|$HERE|g" -e "s|__LABEL__|$DOOR|" \
+            -e "s|__PATH__|$(dirname "$(command -v container)"):/usr/bin:/bin:/usr/sbin:/sbin|" \
+            -e "s|__LOG__|$HOME/Library/Logs/agent-box-door.log|" "$HERE/agent-box-door.plist" > "$DOOR_PLIST"
+        if [ "$was_on" = 0 ] && running; then "$0" down >/dev/null; fi   # its viewer must move to 6090
+        launchctl bootstrap "gui/$(id -u)" "$DOOR_PLIST"
+        echo "agent-box: front door on; open the viewer address any time" ;;
+      off)
+        for l in "$OLD_DOOR" "$DOOR"; do launchctl bootout "gui/$(id -u)/$l" 2>/dev/null || true; done
+        rm -f "$agents/$OLD_DOOR.plist" "$DOOR_PLIST"
+        if running; then "$0" down >/dev/null; fi
+        echo "agent-box: front door off" ;;
+      *) door_on && echo "agent-box: front door on" || echo "agent-box: front door off" ;;
+    esac ;;
+  secret)
+    # The box's password manager (KeePassXC, inside the box). Values never print.
+    # New passwords come from a private secret prompt that writes a file
+    # (T3 Code: request_secret with delivery "file"), so they never enter the chat.
+    need_box
+    case "${2:-}" in
+      save)
+        # agent-box secret save <name> --from-file <path> [--user <username>] [--url <url>]
+        name="${3:-}"; shift 3 || true
+        file=""; user=""; url=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --from-file) file="${2:-}"; shift 2 ;;
+            --user) user="${2:-}"; shift 2 ;;
+            --url) url="${2:-}"; shift 2 ;;
+            *) echo "agent-box: unknown option $1" >&2; exit 2 ;;
+          esac
+        done
+        [ -n "$name" ] && [ -f "$file" ] || { echo "usage: agent-box secret save <name> --from-file <path> [--user <username>] [--url <url>]" >&2; exit 2; }
+        tr -d '\r\n' < "$file" | container exec -i -u agent "$NAME" box-vault add "$name" "$user" "$url" ;;
+      list) vault list ;;
+      rm)   vault rm "${3:?usage: agent-box secret rm <name>}" ;;
+      open) vault gui; echo "agent-box: the password manager is open on the box's screen" ;;
+      *) echo "usage: agent-box secret save <name> --from-file <path> [--user U] [--url URL] | list | rm <name> | open" >&2; exit 2 ;;
+    esac ;;
+  type-secret)
+    # Type a vault entry into the focused field in the box, without printing it.
+    #   agent-box type-secret <name> [--username | --totp] [--no-enter]
+    #   agent-box type-secret --from-file <path> [--no-enter]     (one-time use)
+    # For passwords it presses Enter, then clears any password still left in a
+    # field (e.g. a failed login): page snapshots show password values.
+    shift; need_box
+    field=password; enter=1; name=""; file=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --username) field=username; enter=0; shift ;;
+        --totp) field=totp; shift ;;
+        --no-enter) enter=0; shift ;;
+        --from-file) file="${2:-}"; shift 2 ;;
+        *) name="$1"; shift ;;
+      esac
+    done
+    if [ -n "$file" ]; then
+      [ -f "$file" ] || { echo "agent-box: no such file" >&2; exit 2; }
+      container exec "$NAME" env DISPLAY=:1 xdotool search --onlyvisible --class chromium windowactivate --sync %1 >/dev/null 2>&1 || true
+      tr -d '\r\n' < "$file" | container exec -i "$NAME" env DISPLAY=:1 xdotool type --clearmodifiers --delay 15 --file -
+    else
+      [ -n "$name" ] || { echo "usage: agent-box type-secret <name> [--username|--totp] [--no-enter]" >&2; exit 2; }
+      vault type "$name" "$field" || exit 1
+    fi
+    if [ "$enter" = 0 ]; then
+      [ "$field" = password ] && echo "agent-box: typed it; submit the form before any snapshot (snapshots show password fields)" || echo "agent-box: typed it"
+    else
+      container exec "$NAME" env DISPLAY=:1 xdotool key Return
+      if [ "$field" = password ]; then
+        sleep 3
+        container exec -i "$NAME" python3 - <<'PY' 2>/dev/null || true
+import json, urllib.request, websocket
+js = ("document.querySelectorAll('input[type=password]').forEach(i => { if (i.value) {"
+      " i.value = ''; i.dispatchEvent(new Event('input', {bubbles: true})); } })")
+for t in json.load(urllib.request.urlopen("http://127.0.0.1:9222/json/list", timeout=2)):
+    if t.get("type") != "page":
+        continue
+    try:
+        ws = websocket.create_connection(t["webSocketDebuggerUrl"], timeout=3)
+        ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {"expression": js}}))
+        ws.recv(); ws.close()
+    except Exception:
+        pass
+PY
+      fi
+      echo "agent-box: typed it and pressed Enter"
+    fi ;;
+  off)
+    # Stop the box and the container service too: nothing left running.
+    if running; then "$0" down >/dev/null; fi
+    container system stop >/dev/null 2>&1 || true; echo "agent-box: box and container service stopped" ;;
+  version|--version)
+    sed -n 's/^ *"version": *"\(.*\)".*/\1/p' "$HERE/package.json" ;;
+  *)
+    cat <<'EOF'
+agent-box up       start the box if needed (about 7 s) and print its addresses
+agent-box down     stop the box now (it also stops itself when idle)
+agent-box status   whether it runs, and its CPU and memory use
+agent-box url      viewer addresses (this Mac, and phone over Tailscale)
+agent-box shot [file.png]   screenshot of the whole desktop
+agent-box x <xdotool args>  mouse and keyboard on the desktop
+agent-box exec <cmd>        run a command inside the box
+agent-box logs     the box's log
+agent-box build    rebuild the image
+agent-box off      stop the box and the container service
+agent-box door on|off   always-on helper so the viewer address starts the box itself
+agent-box setup [--skills-dir DIR]... [--no-skills]   install tools, image and agent skill (re-run after updates)
+agent-box uninstall [--all]             undo setup; --all also deletes logins and passwords
+
+Passwords (KeePassXC vault inside the box; values never print):
+agent-box secret list                 entry names
+agent-box secret save <name> --from-file <path> [--user U] [--url URL]
+                                      add one (file from a private secret prompt)
+agent-box secret rm <name>            delete one
+agent-box secret open                 open the password manager on the box's screen
+agent-box type-secret <name> [--username | --totp] [--no-enter]
+                 click the field first; types it there. For passwords it presses
+                 Enter, then clears leftover password fields.
+
+Agents: read the agent-box skill. In short: `agent-box up`, then
+`playwright-cli -s=<your-session> attach --cdp=http://127.0.0.1:9222`, drive the
+page (snapshot, click, screenshot) and finish with `playwright-cli -s=<your-session> detach`.
+Never put a password in a command, file or chat: use agent-box type-secret.
+EOF
+    ;;
+esac

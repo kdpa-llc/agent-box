@@ -1,0 +1,13 @@
+#!/bin/sh
+# Quit Chromium the way a person would (CDP Browser.close), so it saves
+# cookies and logins. A plain SIGTERM makes it exit without saving.
+touch /tmp/box-stopping          # tells the relaunch loop not to restart it
+CHROME_BIN=/usr/lib/chromium/chromium
+python3 - <<'PY' 2>/dev/null
+import json, urllib.request, websocket
+url = json.load(urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=2))["webSocketDebuggerUrl"]
+ws = websocket.create_connection(url, timeout=3)
+ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
+PY
+for _ in $(seq 100); do pgrep -f "^$CHROME_BIN" >/dev/null || exit 0; sleep 0.1; done
+pkill -TERM -f "^$CHROME_BIN"
