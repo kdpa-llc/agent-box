@@ -36,6 +36,7 @@
     "novnc",
     "keepassxc"
   ],
+  "author": "KDPA",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kdpa-llc/agent-box.git"
@@ -43,6 +44,9 @@
   "homepage": "https://github.com/kdpa-llc/agent-box#readme",
   "bugs": {
     "url": "https://github.com/kdpa-llc/agent-box/issues"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "private": true
 }
