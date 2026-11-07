@@ -35,7 +35,7 @@ cleanup() {
   rm -rf "${WORK:?}"
 }
 trap cleanup EXIT
-trap 'echo "FAIL: line $LINENO: $BASH_COMMAND" >&2' ERR
+trap 'echo "FAIL: line $LINENO: $BASH_COMMAND" >&2; "$BOX" logs 2>&1 | tail -n 40 >&2 || true' ERR
 
 step "start the box ($RT)"
 "$BOX" up
