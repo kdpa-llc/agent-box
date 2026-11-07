@@ -1,8 +1,9 @@
-# Agent box: one shared Linux desktop with Chromium for T3 agents.
+# Agent box: one shared Linux desktop with Chromium for AI agents.
 # Same recipe as Anthropic's computer-use demo and E2B's desktop template:
 # virtual screen (Xvfb) + light window manager + VNC with a web viewer (noVNC)
 # + browser + xdotool. Chromium also exposes CDP so agents can use Playwright.
 FROM docker.io/library/debian:trixie-slim
+LABEL agent-box=true org.opencontainers.image.source=https://github.com/kdpa-llc/agent-box
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,12 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN printf '<meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true">\n' \
       > /usr/share/novnc/index.html
 
-# Passwords live in one place (box secret / 1Password), not in Chromium's weak store.
+# Passwords live in one place (the box's KeePassXC vault), not in Chromium's own store.
 RUN mkdir -p /etc/chromium/policies/managed \
     && printf '{"PasswordManagerEnabled": false}\n' > /etc/chromium/policies/managed/agent-box.json
 
 RUN useradd -m -u 1000 -s /bin/bash agent && mkdir -p /data && chown agent:agent /data
-COPY --chmod=755 entrypoint.sh box-quit-browser box-vault /usr/local/bin/
+COPY entrypoint.sh box-quit-browser box-vault /usr/local/bin/
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/box-quit-browser /usr/local/bin/box-vault
 # Taskbar with a "Passwords" button, and KeePassXC settings (no tray, no update
 # checks, never locks by itself, saves after every change).
 COPY desktop/tint2rc /etc/xdg/tint2/agent-box.tint2rc
