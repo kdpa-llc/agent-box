@@ -41,8 +41,8 @@ We welcome feature suggestions! Please open an issue with:
 
 3. **Test your changes**
    ```bash
-   shellcheck -S warning agent-box box-vault box-quit-browser entrypoint.sh tests/smoke.sh
-   tests/smoke.sh
+   npm run lint
+   npm test
    ```
 
 4. **Submit a pull request**
@@ -57,6 +57,9 @@ We welcome feature suggestions! Please open an issue with:
 # Clone your fork
 git clone https://github.com/YOUR_USERNAME/agent-box.git
 cd agent-box
+
+# Install the dev tools and the commit-message hook
+npm install
 
 # Run the command straight from the checkout
 ./agent-box setup --skills-dir /tmp/agent-box-skills
@@ -82,7 +85,7 @@ The image is tagged with a checksum of the files it's built from, so the next `u
 
 ## Commit Messages
 
-This project uses [Conventional Commits](https://www.conventionalcommits.org/) so the history and the changelog stay easy to read.
+This project uses [Conventional Commits](https://www.conventionalcommits.org/) for automated versioning and changelog generation. The `commit-msg` hook checks each message, and CI checks every commit in a pull request.
 
 ### Commit Format
 
@@ -96,21 +99,21 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/) s
 
 ### Commit Types
 
-- **feat**: A new feature
-- **fix**: A bug fix
-- **perf**: A performance improvement
-- **docs**: Documentation changes
-- **refactor**: Code refactoring without feature changes
-- **build**: Changes to the image or packaging
+- **feat**: A new feature (triggers minor version bump)
+- **fix**: A bug fix (triggers patch version bump)
+- **perf**: A performance improvement (triggers patch version bump)
+- **docs**: Documentation changes (triggers patch version bump)
+- **refactor**: Code refactoring without feature changes (triggers patch version bump)
+- **build**: Changes to the image or packaging (triggers patch version bump)
 - **style**: Code style changes (formatting, no functional changes)
 - **test**: Adding or updating tests
 - **ci**: Changes to CI configuration
 - **chore**: Other changes
-- **revert**: Reverts a previous commit
+- **revert**: Reverts a previous commit (triggers patch version bump)
 
 ### Breaking Changes
 
-For a change that breaks existing installs or agent instructions, add `BREAKING CHANGE:` in the commit body or append `!` after the type:
+For a change that breaks existing installs or agent instructions, add `BREAKING CHANGE:` in the commit body or append `!` after the type. This triggers a major version bump:
 
 ```
 feat!: rename the type-secret command
@@ -158,7 +161,10 @@ agent-box/
 ├── chromium-seccomp.json      # Lets Chromium keep its sandbox under Docker and Podman
 ├── box-door.py                # Optional front door on macOS (agent-box door on)
 ├── agent-box-door.plist       # Its launchd template
-└── tests/smoke.sh             # End-to-end test on a real box
+├── tests/smoke.sh             # End-to-end test on a real box
+├── scripts/                   # Release checks
+├── .releaserc.json            # semantic-release configuration
+└── commitlint.config.js       # Commit message rules
 ```
 
 ## Testing
@@ -166,11 +172,11 @@ agent-box/
 ### Running Tests
 
 ```bash
-# Lint the scripts
-shellcheck -S warning agent-box box-vault box-quit-browser entrypoint.sh tests/smoke.sh
+# Lint the scripts (shellcheck)
+npm run lint
 
 # End-to-end test with the container tool chosen in setup
-tests/smoke.sh
+npm test
 
 # Or with a specific one
 BOX_RUNTIME=docker tests/smoke.sh
@@ -180,7 +186,7 @@ The smoke test starts its own box on other ports with its own storage, drives Ch
 
 ### What CI Covers
 
-CI runs the lint checks, then installs the package and runs the smoke test on Linux with Docker (x64 and arm64) and with Podman. GitHub's macOS runners can't run Apple's `container`, so test changes that affect it on a Mac with Apple silicon and say so in the pull request.
+CI runs the lint checks, checks that release notes can be generated and that commit messages follow Conventional Commits, then installs the package and runs the smoke test on Linux with Docker (x64 and arm64) and with Podman. GitHub's macOS runners can't run Apple's `container`, so test changes that affect it on a Mac with Apple silicon and say so in the pull request.
 
 ### Manual Testing
 
@@ -193,7 +199,11 @@ When adding features or changing functionality:
 - Update README.md
 - Update `skills/agent-box/SKILL.md` when agents use the change; keep it short, since agents load it into their context
 - Update `agent-box help`
-- Add an entry to CHANGELOG.md
+- Don't edit CHANGELOG.md by hand: semantic-release writes it from the commit messages
+
+## Releases
+
+Releases are automatic. After CI passes on `main`, semantic-release picks the next version from the commit messages, publishes it to npm, creates a GitHub release and updates CHANGELOG.md. See [PUBLISHING.md](PUBLISHING.md).
 
 ## Community
 

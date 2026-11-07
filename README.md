@@ -6,6 +6,9 @@
 
 Give Claude Code, Codex and other coding agents their own Linux desktop with a real Chromium, saved logins and a password vault. Agents drive the browser with Playwright; you watch in any browser and take over whenever a step needs a person. It runs on your Mac or Linux machine, and only while it's used.
 
+[![npm version][npm-version-badge]][npm-package]
+[![npm downloads][npm-downloads-badge]][npm-package]
+[![Node.js 18+][node-badge]][nodejs]
 [![CI][ci-badge]][ci-workflow]
 [![CodeQL][codeql-badge]][codeql-workflow]
 [![License: MIT][license-badge]][license-file]
@@ -64,18 +67,18 @@ The agent installs it, and asks you which container tool to use if you have more
 **By hand:** run these two commands in a terminal. `setup` asks you the same questions.
 
 ```bash
-npm install -g --allow-git=root github:kdpa-llc/agent-box
+npm install -g agent-box
 agent-box setup
 ```
 
-npm 12 refuses installs from GitHub unless you pass `--allow-git=root`, which allows only this package.
+To try the latest `main` before it's released, install from GitHub instead with `npm install -g --allow-git=root github:kdpa-llc/agent-box`. npm 12 refuses installs from GitHub unless you pass `--allow-git=root`, which allows only this package.
 
 > **🤖 Agents doing the install:**
 >
 > 1. Check the machine has Node and can run one of the container tools above: `uname -sm`, `sw_vers` on a Mac, and `command -v container docker podman`. If none fits, show the user the table and stop.
 > 2. If more than one tool fits, ask the user which to use. Apple's `container` is the default on Macs that can run it; Docker or Podman must already be running.
 > 3. Ask the user where to add the `agent-box` skill; it's how agents learn to use the box. The defaults are the Claude Code skills folder (`$CLAUDE_CONFIG_DIR/skills`, or `~/.claude/skills` when that's unset) and `~/.agents/skills`, which Codex and other agents read. They may instead name other folders, or say none.
-> 4. Run `npm install -g --allow-git=root github:kdpa-llc/agent-box`. Then run `agent-box setup --runtime <tool>`, adding `--skills-dir <folder>` once for each folder they named, `--no-skills` for none, or nothing for the defaults. The first setup takes 1 to 3 minutes.
+> 4. Run `npm install -g agent-box` (if npm can't find the package, use `npm install -g --allow-git=root github:kdpa-llc/agent-box`). Then run `agent-box setup --runtime <tool>`, adding `--skills-dir <folder>` once for each folder they named, `--no-skills` for none, or nothing for the defaults. The first setup takes 1 to 3 minutes.
 > 5. Tell the user what setup printed, and that new agent sessions will know the box.
 
 `agent-box setup` is safe to run again. It:
@@ -238,14 +241,14 @@ agent-box runtime
 
 ## 🔄 Update and remove
 
-**Update:** run the two install commands again, by hand or through an agent. The skill is a link into the package, so it updates too, and the next `agent-box up` rebuilds the image if its files changed. Logins and passwords stay.
+**Update:** run `npm install -g agent-box`, then `agent-box setup`, by hand or through an agent. The skill is a link into the package, so it updates too, and the next `agent-box up` rebuilds the image if its files changed. Logins and passwords stay.
 
 **Remove:**
 
 ```bash
 agent-box uninstall          # skill links, front door, running box; keeps logins and passwords
 agent-box uninstall --all    # also deletes the image and the box's storage, with its logins and passwords
-npm rm -g @kdpa-llc/agent-box
+npm rm -g agent-box
 brew uninstall container     # if you used it and nothing else does
 ```
 
@@ -256,9 +259,12 @@ Turn off the phone viewer with `tailscale serve --https=8443 off`.
 Found a bug 🐛, have an idea ✨, or want to improve the docs? Contributions are welcome. Read [CONTRIBUTING.md][contributing], follow the [Code of Conduct][code-of-conduct], and run the checks before opening a pull request:
 
 ```bash
-shellcheck -S warning agent-box box-vault box-quit-browser entrypoint.sh tests/smoke.sh
-tests/smoke.sh
+npm install      # dev tools and the commit-message hook
+npm run lint     # shellcheck
+npm test         # end-to-end smoke test on a real box
 ```
+
+Releases are automatic: [semantic-release][semantic-release] publishes to npm from [Conventional Commits][conventional-commits] after CI passes. See [PUBLISHING.md][publishing].
 
 ## 🔗 Complementary projects
 
@@ -314,6 +320,11 @@ Made with ❤️ by KDPA
 
 <!-- Reference links -->
 
+[npm-version-badge]: https://img.shields.io/npm/v/agent-box.svg
+[npm-package]: https://www.npmjs.com/package/agent-box
+[npm-downloads-badge]: https://img.shields.io/npm/dm/agent-box
+[node-badge]: https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg
+[nodejs]: https://nodejs.org/
 [ci-badge]: https://github.com/kdpa-llc/agent-box/actions/workflows/ci.yml/badge.svg
 [ci-workflow]: https://github.com/kdpa-llc/agent-box/actions/workflows/ci.yml
 [codeql-badge]: https://github.com/kdpa-llc/agent-box/actions/workflows/codeql.yml/badge.svg
@@ -333,6 +344,9 @@ Made with ❤️ by KDPA
 [contributing]: CONTRIBUTING.md
 [security]: SECURITY.md
 [code-of-conduct]: CODE_OF_CONDUCT.md
+[publishing]: PUBLISHING.md
+[semantic-release]: https://github.com/semantic-release/semantic-release
+[conventional-commits]: https://www.conventionalcommits.org/
 [pw-seccomp]: https://github.com/microsoft/playwright/blob/main/utils/docker/seccomp_profile.json
 [mcp-compression-proxy]: https://github.com/kdpa-llc/mcp-compression-proxy
 [local-skills-mcp]: https://github.com/kdpa-llc/local-skills-mcp
