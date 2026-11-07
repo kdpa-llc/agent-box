@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check shell scripts
+        run: shellcheck -S warning agent-box box-vault box-quit-browser entrypoint.sh tests/smoke.sh
+
+      - name: Check Python, JSON and the agent skill
+        run: |
+          python3 -m py_compile box-door.py
+          python3 -m json.tool chromium-seccomp.json > /dev/null
+          python3 -m json.tool package.json > /dev/null
+          python3 - <<'PY'
+          import re
+          text = open("skills/agent-box/SKILL.md").read()
+          m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+          assert m, "SKILL.md needs YAML frontmatter"
+          fields = dict(line.split(": ", 1) for line in m.group(1).splitlines() if ": " in line)
+          assert fields.get("name") == "agent-box", "the skill must be named agent-box"
+          assert 0 < len(fields.get("description", "")) <= 1024, "the description must be 1 to 1024 characters"
+          print("skill ok")
+          PY
+
+      - name: Check the npm package contents
+        run: |
+          npm pack --dry-run --json > "$RUNNER_TEMP/pack.json"
+          python3 - "$RUNNER_TEMP/pack.json" <<'PY'
+          import json, sys
+          files = {f["path"] for f in json.load(open(sys.argv[1]))[0]["files"]}
+          need = {"agent-box", "Containerfile", "entrypoint.sh", "box-vault", "box-quit-browser",
+                  "chromium-seccomp.json", "skills/agent-box/SKILL.md", "LICENSE", "README.md"}
+          missing = need - files
+          assert not missing, f"missing from the package: {sorted(missing)}"
+          print(f"{len(files)} files in the package")
+          PY
+
+  box:
+    # A real box on Linux: install from the package like a user, run the
+    # end-to-end smoke test, then uninstall. Apple's container can't run on
+    # GitHub's macOS runners (no nested virtualization), so it's tested by hand.
+    name: Box (${{ matrix.runtime }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runtime: docker, arch: x64, runner: ubuntu-24.04 }
+          - { runtime: docker, arch: arm64, runner: ubuntu-24.04-arm }
+          - { runtime: podman, arch: x64, runner: ubuntu-24.04 }
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+
+      - name: Install from the package
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          npm install -g "$RUNNER_TEMP"/kdpa-llc-agent-box-*.tgz
+          agent-box version
+
+      - name: Setup (${{ matrix.runtime }})
+        run: |
+          agent-box setup --runtime ${{ matrix.runtime }} --skills-dir "$RUNNER_TEMP/skills"
+          test -L "$RUNNER_TEMP/skills/agent-box"
+          test "$(agent-box runtime)" = ${{ matrix.runtime }}
+
+      - name: Smoke test
+        run: tests/smoke.sh
+
+      - name: Uninstall
+        run: |
+          agent-box uninstall --all --skills-dir "$RUNNER_TEMP/skills"
+          test ! -e "$RUNNER_TEMP/skills/agent-box"
