@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## 1.0.0 (2026-11-07)
+
+### Bug Fixes
+
+* **door:** find the front door service by the script it runs ([ab05826](https://github.com/kdpa-llc/agent-box/commit/ab058266be4830eabea544586d5ad1a1d5136b0e))
+* **podman:** build the seccomp profile from Docker's current default ([afed434](https://github.com/kdpa-llc/agent-box/commit/afed434f3e0e1c15d6eb34c8a24972f992f7db59))
+
+### Documentation
+
+* install from npm, and describe releases ([c051b55](https://github.com/kdpa-llc/agent-box/commit/c051b55c1224ca9c67566cefe5324feb00a3d407))
+* README and community files in the KDPA layout ([69971f0](https://github.com/kdpa-llc/agent-box/commit/69971f077a71c1a7f10fffb6a406994e0abbca0c))
+* show the screenshot on npm too ([3698904](https://github.com/kdpa-llc/agent-box/commit/369890430aa9505d95a9d420a0f488a36ce6195b))
+* the first npm release is 1.0.0 ([37f78c8](https://github.com/kdpa-llc/agent-box/commit/37f78c8b9a514801c89c1aada1f575a1b1fe6968))
+
+### Build System
+
+* publish to npm as kdpa-agent-box ([1f4b365](https://github.com/kdpa-llc/agent-box/commit/1f4b365dbad08947f344929aeeb8005c1912a4c8))
+* release to npm with semantic-release ([d2fd008](https://github.com/kdpa-llc/agent-box/commit/d2fd00834fa1ea30be8a260bc807437d7a987eff))
+
 ## 0.1.0 (2026-11-06)
 
 First version, installed from GitHub before releases were published to npm.
