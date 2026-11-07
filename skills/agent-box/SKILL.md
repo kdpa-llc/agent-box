@@ -1,15 +1,15 @@
 ---
 name: agent-box
-description: A shared Linux desktop with a real Chromium on this Mac, with saved logins and a password vault, that the user can watch and take over from their phone. Use it for web tasks on real sites, such as logging in, sites that block automated browsers, long multi-step flows and downloads, or anything the user may need to see or finish themselves.
+description: A shared Linux desktop with a real Chromium on this machine, with saved logins and a password vault, that the user can watch and take over from their phone. Use it for web tasks on real sites, such as logging in, sites that block automated browsers, long multi-step flows and downloads, or anything the user may need to see or finish themselves.
 ---
 
 # Agent box
 
-The box is one shared Linux desktop with Chromium, run as a small VM on this Mac. You drive the browser with `playwright-cli`; the user can watch and take over through a web viewer, also from their phone. Logins persist between runs.
+The box is one shared Linux desktop with Chromium, run as a container on this machine. You drive the browser with `playwright-cli`; the user can watch and take over through a web viewer, also from their phone. Logins persist between runs.
 
 ## Drive the browser
 
-Pick a session name for your task, like `-s=hn-top`, and pass it on every `playwright-cli` call. Each shell call is fresh, so write it out each time rather than in a variable.
+Pick a session name for your task, like `-s=hn-top`, and pass it on every `playwright-cli` call. Each shell call is fresh, so write it out each time rather than in a variable. `agent-box up` prints the browser-control address; it's `http://127.0.0.1:9222` unless the user changed it.
 
 ```sh
 agent-box up                                            # start it if needed (about 7 s); safe to run every time
