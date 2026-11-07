@@ -418,6 +418,8 @@ PY
     if running; then "$0" down >/dev/null; fi
     echo "agent-box: box stopped"
     stop_system ;;
+  runtime)
+    echo "$RT" ;;
   version|--version)
     sed -n 's/^ *"version": *"\(.*\)".*/\1/p' "$HERE/package.json" ;;
   *)
@@ -430,6 +432,7 @@ agent-box shot [file.png]   screenshot of the whole desktop
 agent-box x <xdotool args>  mouse and keyboard on the desktop
 agent-box exec <cmd>        run a command inside the box
 agent-box logs     the box's log
+agent-box runtime  the container tool in use (container, docker or podman)
 agent-box build    rebuild the image
 agent-box off      stop the box, and the container service or VM if nothing else uses it
 agent-box door on|off   (macOS) always-on helper so the viewer address starts the box itself
