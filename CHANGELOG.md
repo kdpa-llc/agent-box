@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
-## [0.1.0](https://github.com/kdpa-llc/agent-box/commits/main) (2026-11-06)
+## [0.1.0](https://github.com/kdpa-llc/agent-box/releases/tag/v0.1.0) (2026-11-06)
 
 ### Features
 
@@ -16,4 +16,4 @@ All notable changes to this project are documented in this file.
 * **runtimes:** Apple's `container`, Docker (Docker Desktop, OrbStack, Colima, Docker Engine) or Podman, chosen in `agent-box setup --runtime`
 * **docker:** Chromium keeps its sandbox under Docker and Podman with Playwright's seccomp profile
 * **agents:** `agent-box setup` links an Agent Skill into Claude Code and `~/.agents/skills` (Codex and others), or folders you choose
-* **install:** `npm install -g --allow-git=root github:kdpa-llc/agent-box`, or by pasting one line into a coding agent
+* **install:** from GitHub, or by pasting one line into a coding agent
