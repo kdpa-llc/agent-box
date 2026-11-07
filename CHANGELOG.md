@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
-## [0.1.0](https://github.com/kdpa-llc/agent-box/releases/tag/v0.1.0) (2026-11-06)
+## 0.1.0 (2026-11-06)
+
+First version, installed from GitHub before releases were published to npm.
 
 ### Features
 

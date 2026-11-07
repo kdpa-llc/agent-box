@@ -91,13 +91,15 @@ Actions with repository `kdpa-llc/agent-box` and workflow `release.yml`, then
 remove this repository's access to `NPM_TOKEN`. The Release workflow already
 runs Node 24 with an npm version that supports it and grants `id-token: write`.
 
+The first release is `1.0.0`, semantic-release's default when no earlier version tag exists.
+
 ### Commit Types and Version Bumps
 
 | Commit Type | Version Bump | Example |
 |-------------|--------------|---------|
-| `feat:` | Minor (0.x.0) | `feat: add a TOTP shortcut` |
-| `fix:` | Patch (0.0.x) | `fix: keep the vault unlocked after restart` |
-| `perf:`, `refactor:`, `docs:`, `build:`, `revert:` | Patch (0.0.x) | `docs: explain the phone viewer` |
+| `feat:` | Minor (1.x.0) | `feat: add a TOTP shortcut` |
+| `fix:` | Patch (1.0.x) | `fix: keep the vault unlocked after restart` |
+| `perf:`, `refactor:`, `docs:`, `build:`, `revert:` | Patch (1.0.x) | `docs: explain the phone viewer` |
 | `test:`, `ci:`, `chore:`, `style:` | None | `ci: add an arm64 job` |
 | `BREAKING CHANGE:` | Major (x.0.0) | `feat!: rename type-secret` |
 

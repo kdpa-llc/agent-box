@@ -6,8 +6,8 @@ We release patches for security vulnerabilities for the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+| 1.x     | :white_check_mark: |
+| < 1.0   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -94,7 +94,7 @@ When using Agent Box:
 
 Security updates will be:
 
-- Released as patch versions (e.g., 0.1.1)
+- Released as patch versions (e.g., 1.0.1)
 - Documented in CHANGELOG.md
 - Announced in the release notes
 - Tagged with [SECURITY] in commit messages
