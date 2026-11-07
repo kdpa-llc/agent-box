@@ -83,7 +83,7 @@ When using Agent Box:
 
 - With Apple's `container`, each box is its own lightweight VM
 - With Docker or Podman on Linux, the box is a container sharing the host's kernel. On macOS they run it inside their own Linux VM
-- Chromium keeps its sandbox. Under Docker and Podman, the box uses [Playwright's seccomp profile](https://github.com/microsoft/playwright/blob/main/utils/docker/seccomp_profile.json), which is Docker's default plus the `clone`, `setns` and `unshare` calls the sandbox needs, instead of `--no-sandbox`
+- Chromium keeps its sandbox. Under Docker and Podman, the box runs with [Docker's default seccomp profile](https://github.com/moby/profiles/blob/main/seccomp/default.json) plus the `clone`, `setns` and `unshare` calls the sandbox needs, instead of `--no-sandbox`. That's the same change [Playwright's profile](https://github.com/microsoft/playwright/blob/main/utils/docker/seccomp_profile.json) makes; `npm run update:seccomp` regenerates it
 - The box runs Chromium as an unprivileged user (`agent`)
 
 ### The Front Door (macOS)
