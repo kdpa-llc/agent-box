@@ -54,7 +54,7 @@ case "${1:-}" in
     if pgrep -x keepassxc >/dev/null; then
       xdotool search --onlyvisible --class keepassxc windowactivate 2>/dev/null || true; exit 0
     fi
-    export XDG_RUNTIME_DIR=/tmp/runtime-agent; mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+    export XDG_RUNTIME_DIR=/tmp/runtime-agent; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
     setsid dbus-run-session -- keepassxc "$DB" </dev/null >/tmp/keepassxc.log 2>&1 &
     # KeePassXC 2.7.10 crashes here when unlocked at startup (--pw-stdin), so
     # type the master password into its normal unlock screen instead.
