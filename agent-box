@@ -262,7 +262,7 @@ case "${1:-help}" in
     fi
     "$0" off
     rm -f "$CONF"
-    echo "agent-box: uninstalled. Finish with: npm rm -g agent-box" ;;
+    echo "agent-box: uninstalled. Finish with: npm rm -g kdpa-agent-box" ;;
   up)
     ensure_system
     if ! running; then

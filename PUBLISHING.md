@@ -1,6 +1,6 @@
 # Publishing Guide
 
-This guide explains how Agent Box is released to npm as [`agent-box`](https://www.npmjs.com/package/agent-box).
+This guide explains how Agent Box is released to npm as [`kdpa-agent-box`](https://www.npmjs.com/package/kdpa-agent-box) (the command it installs is `agent-box`).
 
 ## Prerequisites
 
@@ -86,7 +86,7 @@ failed before publication.
 
 semantic-release publishes with `NPM_TOKEN` when it's set. Once the package
 exists on npm, trusted publishing (OIDC) can replace the token: on npmjs.com,
-open the `agent-box` package settings, add a trusted publisher for GitHub
+open the `kdpa-agent-box` package settings, add a trusted publisher for GitHub
 Actions with repository `kdpa-llc/agent-box` and workflow `release.yml`, then
 remove this repository's access to `NPM_TOKEN`. The Release workflow already
 runs Node 24 with an npm version that supports it and grants `id-token: write`.
@@ -150,7 +150,7 @@ git push --follow-tags
 ## Verifying a Release
 
 ```bash
-npm view agent-box version
-npm install -g agent-box
+npm view kdpa-agent-box version
+npm install -g kdpa-agent-box
 agent-box version
 ```

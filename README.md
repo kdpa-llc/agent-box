@@ -67,7 +67,7 @@ The agent installs it, and asks you which container tool to use if you have more
 **By hand:** run these two commands in a terminal. `setup` asks you the same questions.
 
 ```bash
-npm install -g agent-box
+npm install -g kdpa-agent-box
 agent-box setup
 ```
 
@@ -78,7 +78,7 @@ To try the latest `main` before it's released, install from GitHub instead with 
 > 1. Check the machine has Node and can run one of the container tools above: `uname -sm`, `sw_vers` on a Mac, and `command -v container docker podman`. If none fits, show the user the table and stop.
 > 2. If more than one tool fits, ask the user which to use. Apple's `container` is the default on Macs that can run it; Docker or Podman must already be running.
 > 3. Ask the user where to add the `agent-box` skill; it's how agents learn to use the box. The defaults are the Claude Code skills folder (`$CLAUDE_CONFIG_DIR/skills`, or `~/.claude/skills` when that's unset) and `~/.agents/skills`, which Codex and other agents read. They may instead name other folders, or say none.
-> 4. Run `npm install -g agent-box` (if npm can't find the package, use `npm install -g --allow-git=root github:kdpa-llc/agent-box`). Then run `agent-box setup --runtime <tool>`, adding `--skills-dir <folder>` once for each folder they named, `--no-skills` for none, or nothing for the defaults. The first setup takes 1 to 3 minutes.
+> 4. Run `npm install -g kdpa-agent-box` (if npm can't find the package, use `npm install -g --allow-git=root github:kdpa-llc/agent-box`). Then run `agent-box setup --runtime <tool>`, adding `--skills-dir <folder>` once for each folder they named, `--no-skills` for none, or nothing for the defaults. The first setup takes 1 to 3 minutes.
 > 5. Tell the user what setup printed, and that new agent sessions will know the box.
 
 `agent-box setup` is safe to run again. It:
@@ -241,14 +241,14 @@ agent-box runtime
 
 ## 🔄 Update and remove
 
-**Update:** run `npm install -g agent-box`, then `agent-box setup`, by hand or through an agent. The skill is a link into the package, so it updates too, and the next `agent-box up` rebuilds the image if its files changed. Logins and passwords stay.
+**Update:** run `npm install -g kdpa-agent-box`, then `agent-box setup`, by hand or through an agent. The skill is a link into the package, so it updates too, and the next `agent-box up` rebuilds the image if its files changed. Logins and passwords stay.
 
 **Remove:**
 
 ```bash
 agent-box uninstall          # skill links, front door, running box; keeps logins and passwords
 agent-box uninstall --all    # also deletes the image and the box's storage, with its logins and passwords
-npm rm -g agent-box
+npm rm -g kdpa-agent-box
 brew uninstall container     # if you used it and nothing else does
 ```
 
@@ -320,9 +320,9 @@ Made with ❤️ by KDPA
 
 <!-- Reference links -->
 
-[npm-version-badge]: https://img.shields.io/npm/v/agent-box.svg
-[npm-package]: https://www.npmjs.com/package/agent-box
-[npm-downloads-badge]: https://img.shields.io/npm/dm/agent-box
+[npm-version-badge]: https://img.shields.io/npm/v/kdpa-agent-box.svg
+[npm-package]: https://www.npmjs.com/package/kdpa-agent-box
+[npm-downloads-badge]: https://img.shields.io/npm/dm/kdpa-agent-box
 [node-badge]: https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg
 [nodejs]: https://nodejs.org/
 [ci-badge]: https://github.com/kdpa-llc/agent-box/actions/workflows/ci.yml/badge.svg

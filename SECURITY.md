@@ -50,7 +50,7 @@ When using Agent Box:
 
 ### For Users
 
-1. **Keep Updated**: Run `npm install -g agent-box` and `agent-box setup` now and then
+1. **Keep Updated**: Run `npm install -g kdpa-agent-box` and `agent-box setup` now and then
 2. **Store Low-Risk Accounts Only**: Use the vault for test or low-risk accounts, never for your email, bank or cloud admin accounts
 3. **Keep the Ports Local**: The browser-control port and the viewer listen on 127.0.0.1 only. Don't forward or publish them
 4. **Share the Viewer Privately**: Use Tailscale Serve, which reaches only your own devices, rather than a public tunnel. Never use Tailscale Funnel for the viewer
