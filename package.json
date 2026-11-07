@@ -24,7 +24,8 @@
     "lint": "shellcheck -S warning agent-box box-vault box-quit-browser entrypoint.sh tests/smoke.sh",
     "test": "tests/smoke.sh",
     "check:release-notes": "node scripts/check-release-notes.mjs",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "update:seccomp": "node scripts/update-seccomp.mjs"
   },
   "os": [
     "darwin",

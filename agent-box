@@ -278,7 +278,8 @@ case "${1:-help}" in
       fi
       # Apple's container runs each box in its own VM. Docker and Podman share one
       # kernel and block the user namespaces Chromium's sandbox needs, so they get
-      # Playwright's seccomp profile: Docker's default plus clone, setns and unshare.
+      # a seccomp profile: Docker's default plus clone, setns and unshare
+      # (scripts/update-seccomp.mjs regenerates it).
       if [ "$RT" = container ]; then extra=(-c "${BOX_CPUS:-2}")
       else extra=(--cpus "${BOX_CPUS:-2}" --security-opt "seccomp=$HERE/chromium-seccomp.json"); fi
       "$RT" run -d --rm --name "$NAME" --init \

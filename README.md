@@ -167,7 +167,7 @@ agent-box type-secret "GitHub test"           # types a saved password into the 
 | `box-vault`                           | The password vault inside the box (KeePassXC)                         |
 | `box-quit-browser`                    | Closes Chromium cleanly; a plain stop signal kills it before it saves |
 | `desktop/`                            | Taskbar and KeePassXC settings                                        |
-| `chromium-seccomp.json`               | Lets Chromium keep its sandbox under Docker and Podman                |
+| `chromium-seccomp.json`               | Lets Chromium keep its sandbox under Docker and Podman; regenerate it with `npm run update:seccomp` |
 | `box-door.py`, `agent-box-door.plist` | The optional front door on macOS (`agent-box door on`)                |
 | `tests/smoke.sh`                      | End-to-end test on a real box                                         |
 
@@ -217,7 +217,7 @@ Measured on an Apple silicon Mac.
 - Tailscale Serve makes the viewer reachable from your own devices only. Don't use Tailscale Funnel or a public tunnel for it.
 - The vault keeps passwords out of agents' context and logs, but agents that control the box can still get at them. Store only accounts you'd be fine with an agent using.
 - Page snapshots show the text of password fields; `type-secret` clears them about 3 seconds after typing a password.
-- Chromium keeps its sandbox. Under Docker and Podman the box uses [Playwright's seccomp profile][pw-seccomp] instead of `--no-sandbox`.
+- Chromium keeps its sandbox. Under Docker and Podman the box uses [Docker's default seccomp profile][moby-seccomp] plus the three calls the sandbox needs, instead of `--no-sandbox`.
 - With Apple's `container`, each box is its own VM. With Docker or Podman on Linux, it's a container sharing the host's kernel.
 
 See [SECURITY.md][security] to report a vulnerability.
@@ -347,7 +347,7 @@ Made with ❤️ by KDPA
 [publishing]: PUBLISHING.md
 [semantic-release]: https://github.com/semantic-release/semantic-release
 [conventional-commits]: https://www.conventionalcommits.org/
-[pw-seccomp]: https://github.com/microsoft/playwright/blob/main/utils/docker/seccomp_profile.json
+[moby-seccomp]: https://github.com/moby/profiles/blob/main/seccomp/default.json
 [mcp-compression-proxy]: https://github.com/kdpa-llc/mcp-compression-proxy
 [local-skills-mcp]: https://github.com/kdpa-llc/local-skills-mcp
 [peers]: https://github.com/kdpa-llc/peers

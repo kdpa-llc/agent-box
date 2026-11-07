@@ -162,7 +162,7 @@ agent-box/
 ├── box-door.py                # Optional front door on macOS (agent-box door on)
 ├── agent-box-door.plist       # Its launchd template
 ├── tests/smoke.sh             # End-to-end test on a real box
-├── scripts/                   # Release checks
+├── scripts/                   # Release-notes check, seccomp profile generator
 ├── .releaserc.json            # semantic-release configuration
 └── commitlint.config.js       # Commit message rules
 ```
