@@ -302,7 +302,7 @@ Open source grows through the people who try it, share it, and improve it. If Ag
 
 ## 📄 License
 
-[MIT](LICENSE) © 2026 KDPA.
+[MIT](LICENSE) © 2026 KDPA LLC.
 
 ## 🙏 Acknowledgments
 
