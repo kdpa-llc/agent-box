@@ -15,7 +15,6 @@ VIEW_PORT=${BOX_VIEW_PORT:-6080}
 CDP=http://127.0.0.1:$CDP_PORT
 VIEW_LOCAL=http://127.0.0.1:$VIEW_PORT/
 DOOR=local.agent-box.door
-OLD_DOOR=local.agent-box.door   # label used by the first installs
 DOOR_PLIST="$HOME/Library/LaunchAgents/$DOOR.plist"
 SKILL="$HERE/skills/agent-box"
 SKILL_DIRS=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" "$HOME/.agents/skills")   # Claude Code; Codex and other agents
@@ -54,10 +53,25 @@ else
 fi
 
 # With the front door on (agent-box door on, macOS), it owns 6080 and the box's viewer moves to 6090.
+# Door services: ours, and any older install that runs box-door.py under another label.
+door_plists() {
+  if [ "$OS" = Darwin ]; then grep -l 'box-door\.py' "$HOME"/Library/LaunchAgents/*.plist 2>/dev/null; fi
+  return 0
+}
 door_on() {
-  [ "$OS" = Darwin ] || return 1
-  [ -f "$DOOR_PLIST" ] || [ -f "$HOME/Library/LaunchAgents/$OLD_DOOR.plist" ] || return 1
-  launchctl print "gui/$(id -u)/$DOOR" >/dev/null 2>&1 || launchctl print "gui/$(id -u)/$OLD_DOOR" >/dev/null 2>&1
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] && launchctl print "gui/$(id -u)/$(basename "$p" .plist)" >/dev/null 2>&1 && return 0
+  done < <(door_plists)
+  return 1
+}
+door_remove() {
+  local p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    launchctl bootout "gui/$(id -u)/$(basename "$p" .plist)" 2>/dev/null || true
+    rm -f "$p"
+  done < <(door_plists)
 }
 viewer_port() { if [ -z "${BOX_VIEW_PORT:-}" ] && door_on; then echo 6090; else echo "$VIEW_PORT"; fi; }
 
@@ -248,7 +262,7 @@ case "${1:-help}" in
     fi
     "$0" off
     rm -f "$CONF"
-    echo "agent-box: uninstalled. Finish with: npm rm -g @kdpa-llc/agent-box" ;;
+    echo "agent-box: uninstalled. Finish with: npm rm -g agent-box" ;;
   up)
     ensure_system
     if ! running; then
@@ -324,8 +338,7 @@ case "${1:-help}" in
     case "${2:-}" in
       on)
         was_on=0; door_on && was_on=1
-        for l in "$OLD_DOOR" "$DOOR"; do launchctl bootout "gui/$(id -u)/$l" 2>/dev/null || true; done
-        rm -f "$agents/$OLD_DOOR.plist"
+        door_remove
         mkdir -p "$agents" "$HOME/Library/Logs"
         path="$(dirname "$(command -v "$RT")"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         sed -e "s|__HERE__|$HERE|g" -e "s|__LABEL__|$DOOR|" -e "s|__PATH__|$path|" \
@@ -334,8 +347,7 @@ case "${1:-help}" in
         launchctl bootstrap "gui/$(id -u)" "$DOOR_PLIST"
         echo "agent-box: front door on; open the viewer address any time" ;;
       off)
-        for l in "$OLD_DOOR" "$DOOR"; do launchctl bootout "gui/$(id -u)/$l" 2>/dev/null || true; done
-        rm -f "$agents/$OLD_DOOR.plist" "$DOOR_PLIST"
+        door_remove
         if running; then "$0" down >/dev/null; fi
         echo "agent-box: front door off" ;;
       *) door_on && echo "agent-box: front door on" || echo "agent-box: front door off" ;;
