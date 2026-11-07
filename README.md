@@ -22,7 +22,7 @@ Give Claude Code, Codex and other coding agents their own Linux desktop with a r
 
 [🚀 Quick start](#-quick-start) · [🧰 Container tools](#-choose-a-container-tool) · [🔐 Passwords](#-passwords) · [⌨️ Commands](#️-cli-reference) · [💖 Support](#-support-the-project)
 
-<img src="docs/desktop.png" alt="The agent box desktop: Chromium with a taskbar, as seen in the web viewer" width="720">
+<img src="https://raw.githubusercontent.com/kdpa-llc/agent-box/main/docs/desktop.png" alt="The agent box desktop: Chromium with a taskbar, as seen in the web viewer" width="720">
 
 </div>
 
