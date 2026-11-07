@@ -1,6 +1,26 @@
 version: 2
 updates:
-  # Keep the GitHub Actions used by CI and CodeQL up to date
+  # Enable version updates for npm dependencies (the release tooling)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    # Group updates to reduce PR noise
+    groups:
+      development-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "automated"
+    open-pull-requests-limit: 5
+
+  # Keep the GitHub Actions used by CI, CodeQL and releases up to date
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
