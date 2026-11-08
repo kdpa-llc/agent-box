@@ -1,6 +1,6 @@
 ---
 name: agent-box
-description: A shared Linux desktop with a real Chromium on this machine, with saved logins and a password vault, that the user can watch and take over from their phone. Use it for web tasks on real sites, such as logging in, sites that block automated browsers, long multi-step flows and downloads, or anything the user may need to see or finish themselves.
+description: A shared Linux desktop with a real Chromium on this machine, with saved logins and a password vault, that the user can watch and take over from their phone. Use it for web tasks on real sites, such as logging in, sites that block automated browsers, long multi-step flows and downloads, or anything the user may need to see or finish themselves. Also read it before asking the user to sign in for you: it says how to get a sign-in approved from their phone.
 ---
 
 # Agent box
@@ -31,9 +31,19 @@ playwright-cli -s=hn-top detach                         # leaves the browser run
 - For the whole desktop rather than the page: `agent-box shot` (screenshot) and `agent-box x <xdotool args>` (mouse and keyboard).
 - If a command fails because the box stopped, run `agent-box up` and attach again.
 
-## Hand over to the user
+## Sign-ins that need the user
 
-When a step needs a person (a CAPTCHA, a passkey, a login you shouldn't store, a payment), stop and tell the user the viewer address from `agent-box url`. Say what's on the screen and what they should do there. Continue once they say they're done.
+The box has no passkeys or security keys. A passkey's QR code doesn't work either, because the phone has to be near the computer over Bluetooth. So if you ask the user to open the viewer and type a password, they often reach a passkey screen they can't get past. Prefer a sign-in the user approves on their own phone, where their passkeys are. Before you ask for anything, open the sign-in page and check which methods it offers.
+
+Work down this list:
+
+1. **Skip the website.** If the tool has a command line with a web or device login, use that instead of the box. The command prints a link or code. The user opens it on their phone and approves with their passkey, and the waiting command gets the session. Examples are `gh auth login --web`, whose code is entered at github.com/login/device and lasts 15 minutes, and `npm login --auth-type=web`. `npm publish` and `npm trust` (trusted publishing) then ask for another approval link in the same way. Run the command in a pseudo-terminal (`script -q /dev/null <command>` on macOS) and keep it running until the approval lands. Without a pseudo-terminal, npm hides the link and exits. Much of what a website's settings do can also be done with its CLI or API, such as `gh secret set` or `gh api`.
+2. **Use a sign-in the box already has.** If the box is signed in to GitHub or Google, pick "Continue with GitHub" or "Sign in with Google".
+3. **Let the site ask the phone.** Past a passkey prompt, pick "Try another way". Then choose an option that sends a prompt to the phone, such as GitHub Mobile, Google's "Tap Yes" or an authenticator app, or a code by email or text that the user reads and sends you. If the site needs a password first, type a saved one with `type-secret`.
+4. **A token made on the phone.** Name the exact page, the permissions and a short expiry. Collect the token through the private secret prompt (see Passwords), use it, and tell the user to revoke it when you're done.
+5. **The viewer, last.** Hand over the viewer only for what a link can't do, such as a CAPTCHA, a payment, or a step the user wants to do themselves. Give the address from `agent-box url`, say what's on the screen and what to do there, and continue once they say they're done.
+
+Send each link or code the moment it appears, and say when it expires. npm's links last about 5 minutes. If one expires unused, don't keep making new ones. Ask the user to reply when they can approve right away, and make a fresh one then. After two missed links, move to the next step in the list.
 
 ## Passwords
 
@@ -50,7 +60,7 @@ The box has its own password manager, KeePassXC, with one encrypted vault inside
   ```sh
   agent-box secret save "GitHub test" --from-file <path> --user <username> --url https://github.com
   ```
-  `agent-box type-secret --from-file <path>` uses one once without saving. Without such a prompt, ask the user to add the entry in the viewer: the key button in the taskbar opens the password manager.
+  `agent-box type-secret --from-file <path>` uses one once without saving. Without such a prompt, ask the user to add the entry in the viewer: the key button in the taskbar opens the password manager. Ask for a password only when the site offers a phone prompt or a code after it. If its only next step is a passkey, the password is no use; pick another step from the list above.
 
 ## Rules
 

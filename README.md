@@ -116,7 +116,7 @@ agent-box type-secret "GitHub test"           # types a saved password into the 
 
 - Each agent uses its own `playwright-cli` session and its own tab, so several can share the box.
 - Playwright scripts can connect with `chromium.connectOverCDP('http://127.0.0.1:9222')`.
-- When a step needs a person, such as a CAPTCHA, a passkey or a payment, the skill tells the agent to stop and give you the viewer address.
+- When a sign-in needs you, the skill has the agent send a link or code that you approve on your phone, where your passkeys are. The box has no passkeys of its own. The agent gives you the viewer address only for steps a link can't do, such as a CAPTCHA or a payment.
 
 ## 📱 Watch and take over
 
