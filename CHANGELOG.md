@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.0.1](https://github.com/kdpa-llc/agent-box/compare/v1.0.0...v1.0.1) (2026-11-08)
+
+### Bug Fixes
+
+* **skill:** get sign-ins approved from the user's phone, not the viewer ([#3](https://github.com/kdpa-llc/agent-box/issues/3)) ([cce5102](https://github.com/kdpa-llc/agent-box/commit/cce5102248353dad51f07f26661bbd9534e06831))
+
 ## 1.0.0 (2026-11-07)
 
 ### Bug Fixes
