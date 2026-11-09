@@ -264,7 +264,12 @@ info() {
   local t
   if t=$(view_tailnet); then echo "  viewer from phone:      $t (Tailscale)"
   else echo "  viewer from phone:      not published (see $HERE/README.md)"; fi
-  echo "  stops after ${BOX_IDLE_MINUTES:-20} min idle; 'agent-box down' stops it now"
+  local idle hold
+  idle=$(in_box "$NAME" printenv IDLE_MINUTES 2>/dev/null || echo "${BOX_IDLE_MINUTES:-20}")
+  hold=$(in_box "$NAME" sh -c 'h=$(cat /tmp/box-hold-until 2>/dev/null || echo 0); n=$(date +%s); [ "$h" -gt "$n" ] && echo $(( (h - n + 59) / 60 ))' 2>/dev/null || true)
+  if [ "$idle" = 0 ]; then echo "  never stops by itself; 'agent-box down' stops it"
+  else echo "  stops after $idle min idle${hold:+ (kept awake for $hold more min)}; 'agent-box down' stops it now"; fi
+  echo "  downloads: 'agent-box files' lists them, 'agent-box get <name>' copies one here"
 }
 
 case "${1:-help}" in
@@ -400,7 +405,12 @@ case "${1:-help}" in
     for _ in $(seq 20); do [ "$(state)" = absent ] && break; sleep 0.5; done
     echo "agent-box: stopped" ;;
   status)
-    if running; then info; "$RT" stats --no-stream "$NAME" 2>/dev/null || true
+    if running; then
+      info
+      browser=$(curl -s -m 2 "$CDP/json/version" | sed -n 's/.*"Browser": *"\([^"]*\)".*/\1/p')
+      age=""; [ -f "$STAMP" ] && age=$(( ( $(date +%s) - $(cat "$STAMP") ) / 86400 ))
+      echo "  browser: ${browser:-not answering}${age:+, image built $age days ago}"
+      "$RT" stats --no-stream "$NAME" 2>/dev/null || true
     else echo "agent-box: stopped (run 'agent-box up'); container tool: $RT"; fi ;;
   url)
     echo "$VIEW_LOCAL"; view_tailnet || true ;;
@@ -520,6 +530,113 @@ case "${1:-help}" in
     if [ "$enter" = 0 ] && [ "$field" = password ]; then
       echo "agent-box: submit the form before any snapshot (snapshots show password fields)"
     fi ;;
+  files)
+    # Downloads the box saved, newest first.
+    need_box
+    list=$(in_box "$NAME" find /data/Downloads -maxdepth 1 -type f -printf '%T@\t%TY-%Tm-%Td %TH:%TM\t%s\t%f\n' 2>/dev/null | sort -rn || true)
+    if [ -z "$list" ]; then echo "agent-box: no downloads yet"; exit 0; fi
+    printf '%s\n' "$list" | awk -F'\t' '{ n = $4; note = "";
+      if (n ~ /\.crdownload$/) { sub(/\.crdownload$/, "", n); note = "  (still downloading)" }
+      printf "%s  %10s  %s%s\n", $2, $3, n, note }' ;;
+  get)
+    # agent-box get <name>|--latest [destination]: copy a download out of the box.
+    need_box
+    name="${2:-}"; dest="${3:-.}"
+    if [ "$name" = --latest ]; then
+      name=$(in_box "$NAME" sh -c 'ls -1t /data/Downloads 2>/dev/null | grep -v "\.crdownload$" | head -n 1' || true)
+      [ -n "$name" ] || { echo "agent-box: no finished downloads yet" >&2; exit 1; }
+    fi
+    case "$name" in ''|*/*|.|..) echo "usage: agent-box get <name>|--latest [destination] (names from agent-box files)" >&2; exit 2 ;; esac
+    if in_box "$NAME" test -f "/data/Downloads/$name.crdownload"; then
+      echo "agent-box: '$name' is still downloading; try again shortly" >&2; exit 1
+    fi
+    in_box "$NAME" test -f "/data/Downloads/$name" || { echo "agent-box: no download named '$name'; see agent-box files" >&2; exit 1; }
+    [ -d "$dest" ] && dest="${dest%/}/$name"
+    in_box "$NAME" cat "/data/Downloads/$name" > "$dest.part" && mv "$dest.part" "$dest"
+    echo "$dest" ;;
+  hold)
+    # Keep the box awake while you work elsewhere: agent-box hold <minutes> (0 ends it).
+    need_box
+    m="${2:-}"
+    case "$m" in ''|*[!0-9]*) echo "usage: agent-box hold <minutes> (at most 1440; 0 ends the hold)" >&2; exit 2 ;; esac
+    [ "$m" -le 1440 ] || { echo "agent-box: hold for at most 1440 minutes (a day)" >&2; exit 2; }
+    if [ "$m" = 0 ]; then
+      in_box "$NAME" rm -f /tmp/box-hold-until
+      echo "agent-box: hold ended; the box stops after the usual idle time"
+    else
+      in_box "$NAME" sh -c 'echo $(( $(date +%s) + '"$m"' * 60 )) > /tmp/box-hold-until'
+      echo "agent-box: kept awake for $m minutes, even with nothing connected"
+    fi ;;
+  doctor)
+    # Check the setup and say how to fix what's wrong.
+    bad=0
+    pass() { printf '  ok   %s\n' "$1"; }
+    note() { printf '  --   %s\n' "$1"; }
+    fail() { printf '  FAIL %s\n       fix: %s\n' "$1" "$2"; bad=1; }
+    port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+    echo "agent-box $(sed -n 's/^ *"version": *"\(.*\)".*/\1/p' "$HERE/package.json") on $OS $(uname -m), container tool: $RT"
+    if command -v python3 >/dev/null && python3 -c 1 >/dev/null 2>&1; then pass "python3"
+    else fail "python3 is missing (or is macOS's install stub)" "install the Command Line Tools (xcode-select --install) or Python 3"; fi
+    command -v curl >/dev/null && pass "curl" || fail "curl is missing" "install curl"
+    usable=0
+    case "$RT" in
+      container)
+        if ! command -v container >/dev/null; then fail "Apple's container isn't installed" "agent-box setup (or brew install container)"
+        elif container system status >/dev/null 2>&1; then pass "Apple's container is running"; usable=1
+        else note "Apple's container service is stopped; agent-box up starts it"; fi ;;
+      docker|podman)
+        if ! command -v "$RT" >/dev/null; then fail "$RT isn't installed" "install it, or run agent-box setup --runtime <tool>"
+        elif out=$("$RT" info 2>&1); then pass "$RT is running"; usable=1
+        elif echo "$out" | grep -i 'permission denied' >/dev/null; then fail "$RT says permission denied" "sudo usermod -aG docker \$USER, then log out and back in"
+        elif colima_ctx; then note "Colima is stopped; agent-box up starts it"
+        else fail "$RT isn't running" "start Docker Desktop or OrbStack, or run colima start or podman machine start"; fi ;;
+      *) fail "no container tool chosen" "agent-box setup" ;;
+    esac
+    if [ "$usable" = 1 ]; then
+      if image_ok; then
+        age=""; [ -f "$STAMP" ] && age=" ($(( ( $(date +%s) - $(cat "$STAMP") ) / 86400 )) days old)"
+        pass "box image for this version is ready$age"
+      elif locked build; then note "box image is being prepared now (progress: tail $CACHE/build.log)"
+      else note "box image isn't built yet; the next agent-box up prepares it (1 to 3 minutes)"; fi
+      if running; then
+        pass "box is running"
+        if browser=$(curl -sf -m 2 "$CDP/json/version"); then
+          pass "browser answers on $CDP ($(printf '%s' "$browser" | sed -n 's/.*"Browser": *"\([^"]*\)".*/\1/p'))"
+        else fail "browser doesn't answer on $CDP" "agent-box logs; then agent-box down && agent-box up"; fi
+        curl -sf -m 2 -o /dev/null "http://127.0.0.1:$(viewer_port)/vnc.html" && pass "viewer answers" || fail "viewer doesn't answer" "agent-box logs"
+      else
+        note "box is stopped; agent-box up starts it"
+        port_busy "$CDP_PORT" && fail "port $CDP_PORT is taken by something else" "stop it, or set BOX_CDP_PORT to a free port"
+        port_busy "$(viewer_port)" && fail "port $(viewer_port) is taken by something else" "stop it, or set BOX_VIEW_PORT to a free port"
+      fi
+    fi
+    command -v playwright-cli >/dev/null && pass "playwright-cli is installed" || fail "playwright-cli isn't installed" "npm install -g @playwright/cli@latest"
+    skill_dirs=$(conf_get skill_dirs); [ -n "$skill_dirs" ] || skill_dirs=$(IFS=:; echo "${SKILL_DIRS[*]}")
+    if [ "$skill_dirs" = none ]; then note "the agent skill isn't linked (setup ran with --no-skills)"
+    else
+      IFS=: read -r -a sdirs <<< "$skill_dirs"; linked=0
+      for d in "${sdirs[@]}"; do
+        if [ -f "$d/agent-box/SKILL.md" ]; then pass "agent skill linked in $d"; linked=1
+        elif [ -L "$d/agent-box" ]; then fail "the skill link in $d is broken" "agent-box setup"; linked=1; fi
+      done
+      [ "$linked" = 1 ] || fail "the agent skill isn't linked, so agents won't know the box" "agent-box setup"
+    fi
+    prefix=$(npm prefix -g 2>/dev/null || true)
+    if [ -n "$prefix" ] && { [ -w "$prefix/lib/node_modules" ] || [ -w "$prefix/lib" ]; }; then pass "npm can update agent-box without sudo"
+    elif [ -n "$prefix" ]; then note "npm's global folder needs sudo, so updates do too"; fi
+    if command -v "$TS" >/dev/null 2>&1 || [ -x "$TS" ]; then
+      if t=$(view_tailnet); then pass "phone viewer published at $t"
+      else note "phone viewer not published (optional; see the README)"; fi
+    fi
+    if [ "$OS" = Darwin ] && door_on; then
+      script=$(door_plists | head -n 1 | xargs grep -o '/[^<]*box-door\.py' 2>/dev/null | head -n 1)
+      if [ -n "$script" ] && [ -f "$script" ]; then pass "front door is on"
+      else fail "the front door points to an install that's gone" "agent-box door on"; fi
+    fi
+    free=$(df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1048576) }')
+    if [ "$free" -ge 6 ]; then pass "$free GB free on disk"
+    else fail "only $free GB free on disk" "free some space: the image needs about 2 GB, and a build up to 5 GB more for a while"; fi
+    exit "$bad" ;;
   off)
     # Stop the box, and the container service or VM when nothing else uses it.
     if running; then "$0" down >/dev/null; fi
@@ -539,6 +656,10 @@ agent-box shot [file.png]   screenshot of the whole desktop
 agent-box x <xdotool args>  mouse and keyboard on the desktop
 agent-box exec <cmd>        run a command inside the box
 agent-box logs     the box's log
+agent-box files    downloads the box saved, newest first
+agent-box get <name>|--latest [dest]   copy a download out of the box
+agent-box hold <minutes>   keep the box awake that long even when idle (0 ends it)
+agent-box doctor   check the setup and say how to fix what's wrong
 agent-box runtime  the container tool in use (container, docker or podman)
 agent-box build    rebuild the image with current packages
 agent-box off      stop the box, and the container service or VM if nothing else uses it

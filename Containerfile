@@ -15,9 +15,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The viewer's start page is written at startup by entrypoint.sh, with the
 # viewer password in its link.
 
-# Passwords live in one place (the box's KeePassXC vault), not in Chromium's own store.
+# Chromium policies:
+# - passwords live in one place (the box's KeePassXC vault), not in Chromium's own store;
+# - downloads go to the box's storage, where `agent-box files` and `get` find them,
+#   without asking where to save;
+# - it reopens the last session at start, which also keeps session-only logins.
 RUN mkdir -p /etc/chromium/policies/managed \
-    && printf '{"PasswordManagerEnabled": false}\n' > /etc/chromium/policies/managed/agent-box.json
+    && printf '%s\n' '{"PasswordManagerEnabled": false, "DownloadDirectory": "/data/Downloads",' \
+         ' "PromptForDownloadLocation": false, "RestoreOnStartup": 1}' \
+         > /etc/chromium/policies/managed/agent-box.json
 
 RUN useradd -m -u 1000 -s /bin/bash agent && mkdir -p /data && chown agent:agent /data
 COPY entrypoint.sh box-quit-browser box-vault box-type /usr/local/bin/

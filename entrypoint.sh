@@ -61,7 +61,7 @@ rm -f /tmp/box-stopping
     chromium --user-data-dir=/data/profile --remote-debugging-port=9222 \
       --no-first-run --no-default-browser-check --start-maximized \
       --password-store=basic --disable-features=Translate --hide-crash-restore-bubble \
-      ${CHROMIUM_FLAGS:-} about:blank >/tmp/chromium.log 2>&1
+      ${CHROMIUM_FLAGS:-} >/tmp/chromium.log 2>&1   # reopens the last session (policy)
     [ -e /tmp/box-stopping ] && break
     log "chromium exited, restarting"; sleep 1
   done
@@ -76,7 +76,8 @@ trap shutdown TERM INT
 
 log "agent box up: viewer :6080, CDP :9223, screen ${W}x${H}, idle stop ${IDLE_MINUTES}m"
 
-# Idle watchdog. Active = a viewer is connected, or browser-control (CDP) bytes moved.
+# Idle watchdog. Active = a viewer is connected, browser-control (CDP) bytes
+# moved, or an agent asked to keep the box awake (agent-box hold).
 last_active=$(date +%s); prev=""
 while true; do
   sleep 30 & wait $!   # wait lets the stop signal interrupt the sleep
@@ -85,7 +86,9 @@ while true; do
   viewers=$(ss -Htn state established '( sport = :5900 )' | wc -l)
   # Bytes moved by the CDP forwarder (socat and its per-connection children).
   cdp=$(for p in $(pgrep -x socat); do cat /proc/$p/io 2>/dev/null; done | awk '/^(rchar|wchar)/{s+=$2} END{print s+0}')
-  if [ "$viewers" -gt 0 ] || [ "$cdp" != "$prev" ]; then last_active=$now; fi
+  hold=$(cat /tmp/box-hold-until 2>/dev/null || echo 0)
+  case $hold in ''|*[!0-9]*) hold=0 ;; esac
+  if [ "$viewers" -gt 0 ] || [ "$cdp" != "$prev" ] || [ "$hold" -gt "$now" ]; then last_active=$now; fi
   prev=$cdp
   if [ $(( now - last_active )) -ge $(( IDLE_MINUTES * 60 )) ]; then
     log "idle for ${IDLE_MINUTES}m"; shutdown
