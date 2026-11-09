@@ -12,9 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fonts-liberation fonts-dejavu-core fonts-noto-color-emoji xterm \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-# Open the viewer, connect, and scale the screen to the phone or browser window.
-RUN printf '<meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true">\n' \
-      > /usr/share/novnc/index.html
+# The viewer's start page is written at startup by entrypoint.sh, with the
+# viewer password in its link.
 
 # Passwords live in one place (the box's KeePassXC vault), not in Chromium's own store.
 RUN mkdir -p /etc/chromium/policies/managed \

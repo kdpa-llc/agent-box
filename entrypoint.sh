@@ -3,9 +3,31 @@
 # The container exits (and frees its memory) after IDLE_MINUTES with no viewer
 # connected and no browser-control traffic. IDLE_MINUTES=0 keeps it running.
 set -u
-# Start as root only to hand the storage volume to the agent user, then drop root.
+# Start as root only to hand the storage volume to the agent user and set up
+# the viewer's password, then drop root.
 if [ "$(id -u)" = 0 ]; then
   chown agent:agent /data
+  # The viewer has a password, so a web page open on the same machine can't
+  # connect to it and drive the desktop. The box's own viewer link carries it:
+  # only a page opened on its own (not inside another page's frame) can read
+  # it and pass it on.
+  mkdir -p /data/vnc
+  [ -s /data/vnc/password ] || (umask 077; head -c 256 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 8 > /data/vnc/password)
+  chown -R agent:agent /data/vnc; chmod 700 /data/vnc; chmod 600 /data/vnc/password
+  cat > /usr/share/novnc/index.html <<EOF
+<!doctype html>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>Agent box</title>
+<script>
+  if (window.top === window.self) {
+    location.replace("vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true&password=$(cat /data/vnc/password)");
+  } else {
+    document.write("Open the agent box viewer in its own tab.");
+  }
+</script>
+<noscript>The viewer needs JavaScript.</noscript>
+EOF
   export HOME=/home/agent USER=agent
   exec setpriv --reuid=agent --regid=agent --init-groups "$0" "$@"
 fi
@@ -25,7 +47,7 @@ tint2 -c /etc/xdg/tint2/agent-box.tint2rc >/dev/null 2>&1 &
 mkdir -p "$HOME/.config/keepassxc" && cp /etc/agent-box/keepassxc.ini "$HOME/.config/keepassxc/"
 box-vault init   # the password vault, created on first start
 
-x11vnc -display :1 -localhost -rfbport 5900 -forever -shared -nopw -quiet -bg -o /tmp/x11vnc.log
+x11vnc -display :1 -localhost -rfbport 5900 -forever -shared -passwdfile /data/vnc/password -quiet -bg -o /tmp/x11vnc.log
 websockify --web /usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 >/tmp/websockify.log 2>&1 &
 
 # Chromium only listens for CDP on 127.0.0.1; forward it so the Mac can reach it.
