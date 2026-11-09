@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.2.0](https://github.com/kdpa-llc/agent-box/compare/v1.1.0...v1.2.0) (2026-11-09)
+
+### Features
+
+* show agent-box in the T3 browser panel ([a3da3c9](https://github.com/kdpa-llc/agent-box/commit/a3da3c991cb60704d3c32f6e7efedc113ae454ac))
+
 ## [1.1.0](https://github.com/kdpa-llc/agent-box/compare/v1.0.1...v1.1.0) (2026-11-09)
 
 ### Features
