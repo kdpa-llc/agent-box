@@ -31,7 +31,8 @@ Coding agents are good at the web until a site wants a login, blocks headless br
 - 🖥️ **A real desktop**: Linux, Chromium and a taskbar, viewable in any browser.
 - 🤖 **Driven with Playwright**: agents use `playwright-cli` over Chromium's remote-control port instead of clicking on pixels, with desktop screenshots and mouse and keyboard control when they need them.
 - 📱 **Watch and take over from your phone** through the web viewer and Tailscale.
-- 🔐 **Passwords agents don't see**: a KeePassXC vault inside the box. Agents type entries into the page without the values reaching their output.
+- 🔐 **Passwords agents don't see**: a KeePassXC vault inside the box. Agents type entries into the right page, on the right site only, without the values reaching their output.
+- 📥 **Downloads and uploads**: files the browser downloads stay in the box until an agent copies them out, and agents upload files from your machine into pages.
 - 🍪 **Logins that persist** between runs.
 - 💤 **Runs only while used**: starts in seconds and stops itself after 20 idle minutes.
 - 🧩 **Agents already know how to use it**: setup adds an [Agent Skill][agent-skills] for Claude Code, Codex and others.
@@ -85,7 +86,7 @@ To try the latest `main` before it's released, install from GitHub instead with 
 
 - installs `playwright-cli` (npm) if it's missing, and Apple's `container` (Homebrew) when that's the chosen tool;
 - starts the container tool, and remembers the choice in `~/.config/agent-box/config`;
-- builds the box image, which takes 1 to 3 minutes and 1.7 GB;
+- builds the box image (1 to 3 minutes, 1.7 GB) in the background; the first `agent-box up` finishes it if needed;
 - links the `agent-box` skill into the chosen folders.
 
 ### 2. Watch it
@@ -110,17 +111,21 @@ playwright-cli -s=my-task attach --cdp=http://127.0.0.1:9222
 playwright-cli -s=my-task tab-new https://example.com
 playwright-cli -s=my-task find "Sign in"      # matching page elements, with refs like e12
 playwright-cli -s=my-task click e12
+agent-box type-secret "GitHub test"           # types a saved password into the field it clicked
+agent-box get --latest ./                     # copies the newest download out of the box
+playwright-cli -s=my-task tab-close           # closes its own tab
 playwright-cli -s=my-task detach              # leaves the browser running for others
-agent-box type-secret "GitHub test"           # types a saved password into the focused field
 ```
 
 - Each agent uses its own `playwright-cli` session and its own tab, so several can share the box.
+- Uploads work too: the agent clicks a file input and runs `playwright-cli upload <file on your machine>`.
+- `agent-box hold <minutes>` keeps the box awake while an agent waits, for example for you.
 - Playwright scripts can connect with `chromium.connectOverCDP('http://127.0.0.1:9222')`.
 - When a sign-in needs you, the skill has the agent send a link or code that you approve on your phone, where your passkeys are. The box has no passkeys of its own. The agent gives you the viewer address only for steps a link can't do, such as a CAPTCHA or a payment.
 
 ## 📱 Watch and take over
 
-- **On the same machine:** open http://127.0.0.1:6080/.
+- **On the same machine:** open http://127.0.0.1:6080/. The viewer has a password, so web pages you visit can't connect to it; this address passes it on for you, so bookmark the address itself.
 - **From your phone:** install Tailscale on the phone and the machine, signed in to the same account. Then run this once on the machine (on Linux, the command is just `tailscale`). It makes the viewer reachable from your own devices only, not from the internet:
 
   ```bash
@@ -135,7 +140,7 @@ agent-box type-secret "GitHub test"           # types a saved password into the 
 - **The password manager:** KeePassXC, free and open source, inside the box. The vault is one encrypted file (AES-256, Argon2) in the box's storage, at `/data/vault/vault.kdbx`. Nothing is stored outside the box or in a cloud.
 - **Edit entries:** in the viewer, tap the key button at the bottom left. The manager opens unlocked. Add, edit or delete entries there, including 2FA codes (Entries > TOTP > Set up TOTP). It saves after every change.
 - **Add one through an agent:** ask it to "save a password for X in the agent box". In T3 Code it shows you a private card for the password; elsewhere it asks you to add it in the viewer.
-- **How agents use them:** `agent-box type-secret` looks up and types the entry inside the box, so the value doesn't appear in their chat, commands or output. About 3 seconds after a password, it clears any password still in a field, because page snapshots show their text.
+- **How agents use them:** `agent-box type-secret` looks up and types the entry inside the box, so the value doesn't appear in their chat, commands or output. It types only into the page whose focused field is the right kind, a password field for a password, and only on the site saved with the entry, so it can't land in another agent's tab or on a look-alike site. About 3 seconds after a password, it empties the password fields on that page, because page snapshots show their text.
 - **Chromium's own "Save password?" is off**, so the vault is the only place passwords live.
 - **Unlocking:** the vault opens with a random master password kept next to it, in `/data/vault/.master`. That's what lets agents log in while you're away.
 
@@ -153,10 +158,11 @@ agent-box type-secret "GitHub test"           # types a saved password into the 
  You ── browser or phone ──► 127.0.0.1:6080 (viewer) ◄┘
 ```
 
-- **The box** is one Debian container: a virtual screen (Xvfb), a light window manager (Openbox), a taskbar (tint2), Chromium and KeePassXC.
-- **Agents** reach Chromium's remote-control port (CDP) on 127.0.0.1:9222. **You** reach the desktop through noVNC on 127.0.0.1:6080.
-- **Storage:** the browser profile and the vault live in a volume (`agent-box-data`) that outlives the box.
-- **Idle stop:** a watchdog counts viewer connections and browser-control traffic. After 20 quiet minutes it quits Chromium cleanly, so logins are saved, and the box exits.
+- **The box** is one Debian container on its own network: a virtual screen (Xvfb), a light window manager (Openbox), a taskbar (tint2), Chromium and KeePassXC.
+- **Agents** reach Chromium's remote-control port (CDP) on 127.0.0.1:9222. **You** reach the desktop through noVNC on 127.0.0.1:6080, with a password its own start page fills in.
+- **Storage:** the browser profile, its last session, downloads and the vault live in a volume (`agent-box-data`) that outlives the box.
+- **Idle stop:** a watchdog counts viewer connections, browser-control traffic and holds. After 20 quiet minutes it quits Chromium cleanly, so logins are saved, and the box exits.
+- **Images:** `agent-box up` builds the image in the background when it's missing, and rebuilds it with current packages when it's over 14 days old, so the browser gets security updates.
 
 | File                                  | What it does                                                          |
 | ------------------------------------- | --------------------------------------------------------------------- |
@@ -165,6 +171,7 @@ agent-box type-secret "GitHub test"           # types a saved password into the 
 | `Containerfile`                       | The box image (Debian trixie-slim)                                    |
 | `entrypoint.sh`                       | Starts the screen, viewer, Chromium and the idle watchdog             |
 | `box-vault`                           | The password vault inside the box (KeePassXC)                         |
+| `box-type`                            | Types a vault entry into the right page and field, over CDP           |
 | `box-quit-browser`                    | Closes Chromium cleanly; a plain stop signal kills it before it saves |
 | `desktop/`                            | Taskbar and KeePassXC settings                                        |
 | `chromium-seccomp.json`               | Lets Chromium keep its sandbox under Docker and Podman; regenerate it with `npm run update:seccomp` |
@@ -183,12 +190,16 @@ agent-box type-secret "GitHub test"           # types a saved password into the 
 | `agent-box x <xdotool args>`                                     | Mouse and keyboard on the desktop                                       |
 | `agent-box exec <cmd>`                                           | Run a command inside the box                                            |
 | `agent-box logs`                                                 | The box's log                                                           |
+| `agent-box files`                                                | Downloads the box saved, newest first                                   |
+| `agent-box get <name>\|--latest [dest]`                          | Copy a download out of the box                                          |
+| `agent-box hold <minutes>`                                       | Keep the box awake that long even when idle; `0` ends it                |
+| `agent-box doctor`                                               | Check the setup and say how to fix what's wrong                         |
 | `agent-box runtime`                                              | The container tool in use                                               |
-| `agent-box build`                                                | Rebuild the image                                                       |
+| `agent-box build`                                                | Rebuild the image with current packages                                 |
 | `agent-box off`                                                  | Stop the box, and the container service or VM if nothing else uses it   |
 | `agent-box door on\|off`                                         | (macOS) Always-on helper so the viewer address starts the box           |
 | `agent-box secret list\|save\|rm\|open`                          | Manage the vault; `open` shows the password manager on the box's screen |
-| `agent-box type-secret <name> [--username\|--totp] [--no-enter]` | Type a vault entry into the focused field                               |
+| `agent-box type-secret <name> [--username\|--totp] [--no-enter] [--page <text>]` | Type a vault entry into the field an agent clicked, on the entry's site |
 | `agent-box setup [--runtime T] [--skills-dir D]... [--no-skills]` | Install tools, image and agent skill                                   |
 | `agent-box uninstall [--all]`                                    | Undo setup; `--all` also deletes the image, logins and passwords        |
 
@@ -202,6 +213,8 @@ Settings (environment variables for `agent-box up`):
 | `BOX_WIDTH` × `BOX_HEIGHT`      | 1280×800                          |
 | `BOX_CDP_PORT`, `BOX_VIEW_PORT` | 9222, 6080                        |
 | `BOX_RUNTIME`                   | the tool chosen in setup          |
+| `BOX_REFRESH_DAYS`              | 14 (rebuild older images; 0 never) |
+| `BOX_PREPARE_WAIT`              | 100 s (how long `up` waits for a build) |
 
 ## 📊 What it costs
 
@@ -213,10 +226,12 @@ Measured on an Apple silicon Mac.
 
 ## 🛡️ Security and privacy
 
-- Browser control (CDP) and the viewer listen on 127.0.0.1 only. Neither has a password, so anything running on the machine can use them; don't forward or publish those ports.
-- Tailscale Serve makes the viewer reachable from your own devices only. Don't use Tailscale Funnel or a public tunnel for it.
+- Browser control (CDP) and the viewer are published on 127.0.0.1 only, and the box sits on its own container network, so other containers can't reach them. Any program on the machine itself can use browser control; don't forward or publish those ports.
+- The viewer has a password. Its start page passes it on only when opened in its own tab, never inside another page's frame, so web pages you visit can't connect to the box or show it to you in a frame.
+- Tailscale Serve makes the viewer reachable on your tailnet only, not the internet: every device and person your tailnet's access rules allow. Don't use Tailscale Funnel or a public tunnel for it.
 - The vault keeps passwords out of agents' context and logs, but agents that control the box can still get at them. Store only accounts you'd be fine with an agent using.
-- Page snapshots show the text of password fields; `type-secret` clears them about 3 seconds after typing a password.
+- `type-secret` types only into a field of the right kind, on the site saved with the entry; it refuses look-alike sites. Page snapshots show the text of password fields, so it empties that page's password fields about 3 seconds after typing.
+- The image is rebuilt with current Debian packages when it's over 14 days old, so Chromium gets security updates.
 - Chromium keeps its sandbox. Under Docker and Podman the box uses [Docker's default seccomp profile][moby-seccomp] plus the three calls the sandbox needs, instead of `--no-sandbox`.
 - With Apple's `container`, each box is its own VM. With Docker or Podman on Linux, it's a container sharing the host's kernel.
 
@@ -224,15 +239,15 @@ See [SECURITY.md][security] to report a vulnerability.
 
 ## 🩺 Troubleshooting
 
-Start with:
+Start with `agent-box doctor`: it checks the container tool, the image, ports, playwright-cli, the agent skill, the phone viewer and disk space, and prints how to fix each problem. Then:
 
 ```bash
 agent-box status
 agent-box logs
-agent-box runtime
 ```
 
-- **"browser did not come up":** `agent-box logs` shows why. On Docker or Podman, a loop of "chromium exited, restarting" means the seccomp profile wasn't applied.
+- **`up` says it's preparing the image (exit code 75):** the first start after an install or update builds it, which takes 1 to 3 minutes. Run `up` again in a minute.
+- **"browser doesn't answer":** `agent-box logs` shows why. On Docker or Podman, a loop of "chromium exited, restarting" means the seccomp profile wasn't applied.
 - **"docker isn't running":** start Docker Desktop or OrbStack, or `colima start`. With Colima chosen in setup, `agent-box up` starts it for you.
 - **The phone saves a file instead of showing the viewer:** the box is off. Run `agent-box up`, or `agent-box door on` on a Mac.
 - **A port is already in use:** set `BOX_CDP_PORT` and `BOX_VIEW_PORT`.

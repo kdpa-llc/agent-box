@@ -156,6 +156,7 @@ agent-box/
 ├── Containerfile              # The box image (Debian trixie-slim)
 ├── entrypoint.sh              # Starts the screen, viewer, Chromium and idle watchdog
 ├── box-vault                  # Password vault inside the box (KeePassXC)
+├── box-type                   # Types a vault entry into the right page and field, over CDP
 ├── box-quit-browser           # Closes Chromium cleanly so logins are saved
 ├── desktop/                   # Taskbar and KeePassXC settings
 ├── chromium-seccomp.json      # Lets Chromium keep its sandbox under Docker and Podman
@@ -182,7 +183,7 @@ npm test
 BOX_RUNTIME=docker tests/smoke.sh
 ```
 
-The smoke test starts its own box on other ports with its own storage, drives Chromium with `playwright-cli`, types a vault entry into a form, takes a screenshot, restarts the box to check a cookie survived, and removes the box again.
+The smoke test starts its own box on other ports with its own storage. It checks the viewer needs its password, drives Chromium with `playwright-cli`, types vault entries into the right one of two tabs and checks the wrong site and the wrong kind of field are refused, downloads and uploads a file, checks the time zone and `hold`, restarts the box to check logins survived, and removes the box again.
 
 ### What CI Covers
 

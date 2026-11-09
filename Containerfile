@@ -12,17 +12,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fonts-liberation fonts-dejavu-core fonts-noto-color-emoji xterm \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
-# Open the viewer, connect, and scale the screen to the phone or browser window.
-RUN printf '<meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&reconnect=true&show_dot=true">\n' \
-      > /usr/share/novnc/index.html
+# The viewer's start page is written at startup by entrypoint.sh, with the
+# viewer password in its link.
 
-# Passwords live in one place (the box's KeePassXC vault), not in Chromium's own store.
+# Chromium policies:
+# - passwords live in one place (the box's KeePassXC vault), not in Chromium's own store;
+# - downloads go to the box's storage, where `agent-box files` and `get` find them,
+#   without asking where to save;
+# - it reopens the last session at start, which also keeps session-only logins.
 RUN mkdir -p /etc/chromium/policies/managed \
-    && printf '{"PasswordManagerEnabled": false}\n' > /etc/chromium/policies/managed/agent-box.json
+    && printf '%s\n' '{"PasswordManagerEnabled": false, "DownloadDirectory": "/data/Downloads",' \
+         ' "PromptForDownloadLocation": false, "RestoreOnStartup": 1}' \
+         > /etc/chromium/policies/managed/agent-box.json
 
 RUN useradd -m -u 1000 -s /bin/bash agent && mkdir -p /data && chown agent:agent /data
-COPY entrypoint.sh box-quit-browser box-vault /usr/local/bin/
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/box-quit-browser /usr/local/bin/box-vault
+COPY entrypoint.sh box-quit-browser box-vault box-type /usr/local/bin/
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/box-quit-browser /usr/local/bin/box-vault \
+      /usr/local/bin/box-type
 # Taskbar with a "Passwords" button, and KeePassXC settings (no tray, no update
 # checks, never locks by itself, saves after every change).
 COPY desktop/tint2rc /etc/xdg/tint2/agent-box.tint2rc

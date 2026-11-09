@@ -48,7 +48,7 @@ jobs:
 
       - name: Check Python, JSON and the agent skill
         run: |
-          python3 -m py_compile box-door.py
+          python3 -m py_compile box-door.py box-type
           python3 -m json.tool chromium-seccomp.json > /dev/null
           python3 -m json.tool package.json > /dev/null
           python3 - <<'PY'
@@ -68,7 +68,7 @@ jobs:
           python3 - "$RUNNER_TEMP/pack.json" <<'PY'
           import json, sys
           files = {f["path"] for f in json.load(open(sys.argv[1]))[0]["files"]}
-          need = {"agent-box", "Containerfile", "entrypoint.sh", "box-vault", "box-quit-browser",
+          need = {"agent-box", "Containerfile", "entrypoint.sh", "box-vault", "box-type", "box-quit-browser",
                   "chromium-seccomp.json", "skills/agent-box/SKILL.md", "LICENSE", "README.md"}
           missing = need - files
           assert not missing, f"missing from the package: {sorted(missing)}"

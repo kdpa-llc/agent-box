@@ -7,7 +7,8 @@
 #   box-vault list                      entry names
 #   box-vault add <name> [user] [url]   password read from stdin
 #   box-vault rm <name>
-#   box-vault type <name> [password|username|totp]   type it into the focused field
+#   box-vault type <name> [password|username|totp] [box-type options]
+#                                       type it into the focused field (see box-type)
 #   box-vault gui                       open the KeePassXC window, unlocked
 #
 # The vault is encrypted (KeePassXC: AES-256, Argon2) and unlocked with a random
@@ -33,23 +34,25 @@ case "${1:-}" in
     name=${2:?name}; user=${3:-}; url=${4:-}
     pw=$(cat)
     [ -n "$pw" ] || { echo "empty password; nothing saved" >&2; exit 1; }
-    { master; printf '%s\n' "$pw"; } | keepassxc-cli add -q -u "$user" --url "$url" -p "$DB" "$name" >/dev/null
+    # keepassxc-cli rewrites the whole file, so one change at a time.
+    { master; printf '%s\n' "$pw"; } | flock "$DIR/.lock" keepassxc-cli add -q -u "$user" --url "$url" -p "$DB" "$name" >/dev/null
     echo "saved '$name'" ;;
   rm)
-    master | keepassxc-cli rm -q "$DB" "${2:?name}" >/dev/null
+    master | flock "$DIR/.lock" keepassxc-cli rm -q "$DB" "${2:?name}" >/dev/null
     echo "removed '$2'" ;;
   type)
-    name=${2:?name}
-    case "${3:-password}" in
+    name=${2:?name}; field=${3:-password}; [ $# -ge 3 ] && shift 3 || shift $#
+    case "$field" in
       password) value=$(master | keepassxc-cli show -q -s -a Password "$DB" "$name") ;;
       username) value=$(master | keepassxc-cli show -q -a UserName "$DB" "$name") ;;
       totp)     value=$(master | keepassxc-cli show -q -t "$DB" "$name" | tail -n 1) ;;
       *) echo "field must be password, username or totp" >&2; exit 2 ;;
     esac
-    [ -n "$value" ] || { echo "'$name' has no ${3:-password}" >&2; exit 1; }
-    # Type into Chromium even if the password manager window is in front.
-    xdotool search --onlyvisible --class chromium windowactivate --sync %1 2>/dev/null || true
-    printf '%s' "$value" | xdotool type --clearmodifiers --delay 15 --file - ;;
+    [ -n "$value" ] || { echo "'$name' has no $field" >&2; exit 1; }
+    # box-type finds the page and field the agent focused, checks it's on the
+    # entry's site, and types there over CDP, whatever window is in front.
+    url=$(master | keepassxc-cli show -q -a URL "$DB" "$name" 2>/dev/null || true)
+    printf '%s' "$value" | box-type --kind "$field" --url "$url" "$@" ;;
   gui)
     if pgrep -x keepassxc >/dev/null; then
       xdotool search --onlyvisible --class keepassxc windowactivate 2>/dev/null || true; exit 0
@@ -66,5 +69,5 @@ case "${1:-}" in
     cat "$MASTER" | xdotool type --clearmodifiers --delay 5 --file -
     xdotool key Return ;;
   *)
-    sed -n '5,11p' "$0"; exit 2 ;;
+    sed -n '5,12p' "$0"; exit 2 ;;
 esac
