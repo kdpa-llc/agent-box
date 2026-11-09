@@ -1,11 +1,23 @@
 ---
 name: agent-box
-description: A shared Linux desktop with a real Chromium on this machine, with saved logins and a password vault, that the user can watch and take over from their phone. Use it for web tasks on real sites, such as logging in, sites that block automated browsers, long multi-step flows, downloads and uploads, or anything the user may need to see or finish themselves. Also read it before asking the user to sign in for you: it says how to get a sign-in approved from their phone.
+description: "A shared Linux desktop with a real Chromium on this machine, with saved logins and a password vault, that the user can watch and take over from their phone. Use it for web tasks on real sites, such as logging in, sites that block automated browsers, long multi-step flows, downloads and uploads, or anything the user may need to see or finish themselves. Also read it before asking the user to sign in for you: it says how to get a sign-in approved from their phone."
 ---
 
 # Agent box
 
 The box is one shared Linux desktop with Chromium, run as a container on this machine. You drive the browser with `playwright-cli`; the user can watch and take over through a web viewer, also from their phone. Logins persist between runs.
+
+## Show the desktop in T3 Code
+
+When using the box in T3 Code, show its live desktop in the session's browser panel before interacting with it. After `agent-box up`, use the local viewer address it prints (normally `http://127.0.0.1:6080/`):
+
+1. Call `preview_status`. If you own this thread's agent-box viewer tab, show it with `preview_open`, its `tabId` and `open: true`. Leave tabs controlled by the user alone.
+2. If there is no viewer tab, call `preview_open` with the viewer address, `open: true` and `reuseExistingTab: false`. Keep the returned `tabId`; use it when showing the viewer again so other preview tabs are preserved.
+3. Keep the viewer available while working or waiting for the user to take over. Continue driving Chromium inside the box with the commands below; the preview tab displays the shared desktop.
+
+Open the viewer root address, not its redirected address, which can contain a password. Do not copy that redirected address into messages or files. Use a preview tab, not an HTML iframe: the viewer deliberately refuses to connect inside a frame.
+
+If preview tools are unavailable or cannot open the viewer, give the user the phone address from `agent-box url` and continue the task. Close a viewer tab you opened when finished unless the user is using it or asked to keep it open. A connected viewer keeps the box awake. The screen is shared, so it may show another agent's foreground tab.
 
 ## Drive the browser
 

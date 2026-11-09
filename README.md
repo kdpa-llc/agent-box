@@ -118,6 +118,7 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 ```
 
 - Each agent uses its own `playwright-cli` session and its own tab, so several can share the box.
+- In T3 Code, the skill opens the box's live desktop in the session's browser panel while the agent works. This shows the shared screen, including whichever tab is in front. A connected viewer keeps the box awake.
 - Uploads work too: the agent clicks a file input and runs `playwright-cli upload <file on your machine>`.
 - `agent-box hold <minutes>` keeps the box awake while an agent waits, for example for you.
 - Playwright scripts can connect with `chromium.connectOverCDP('http://127.0.0.1:9222')`.
