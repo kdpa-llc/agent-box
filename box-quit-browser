@@ -11,3 +11,5 @@ ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
 PY
 for _ in $(seq 100); do pgrep -f "^$CHROME_BIN" >/dev/null || exit 0; sleep 0.1; done
 pkill -TERM -f "^$CHROME_BIN"
+# Give it a moment to write its files before the box itself stops.
+for _ in $(seq 30); do pgrep -f "^$CHROME_BIN" >/dev/null || exit 0; sleep 0.1; done
