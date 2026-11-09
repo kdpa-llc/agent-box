@@ -20,7 +20,7 @@ SKILL="$HERE/skills/agent-box"
 SKILL_DIRS=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" "$HOME/.agents/skills")   # Claude Code; Codex and other agents
 
 # The image tag is a checksum of the files it's built from, so an update rebuilds it.
-BUILD_FILES=(Containerfile entrypoint.sh box-quit-browser box-vault desktop/tint2rc desktop/agent-box-passwords.desktop desktop/keepassxc.ini)
+BUILD_FILES=(Containerfile entrypoint.sh box-quit-browser box-vault box-type desktop/tint2rc desktop/agent-box-passwords.desktop desktop/keepassxc.ini)
 TAG=$(cd "$HERE" && cat "${BUILD_FILES[@]}" | cksum | cut -d' ' -f1)
 IMAGE="agent-box:$TAG"
 
@@ -379,52 +379,41 @@ case "${1:-help}" in
       *) echo "usage: agent-box secret save <name> --from-file <path> [--user U] [--url URL] | list | rm <name> | open" >&2; exit 2 ;;
     esac ;;
   type-secret)
-    # Type a vault entry into the focused field in the box, without printing it.
-    #   agent-box type-secret <name> [--username | --totp] [--no-enter]
-    #   agent-box type-secret --from-file <path> [--no-enter]     (one-time use)
-    # For passwords it presses Enter, then clears any password still left in a
-    # field (e.g. a failed login): page snapshots show password values.
+    # Type a vault entry into the field the agent focused, without printing it.
+    #   agent-box type-secret <name> [--username | --totp] [--no-enter] [--page <text>] [--keyboard]
+    #   agent-box type-secret --from-file <path> [--url <site>] [...]       (one-time use)
+    # It types into the one page whose focused field is the right kind (a password
+    # field for passwords), on the entry's site, whatever tab is in front. For
+    # passwords it presses Enter, then clears password fields on that page:
+    # page snapshots show their text.
     shift; need_box
-    field=password; enter=1; name=""; file=""
+    field=password; enter=1; name=""; file=""; url=""; opts=()
     while [ $# -gt 0 ]; do
       case "$1" in
         --username) field=username; enter=0; shift ;;
         --totp) field=totp; shift ;;
         --no-enter) enter=0; shift ;;
         --from-file) file="${2:-}"; shift 2 ;;
+        --url) url="${2:-}"; shift 2 ;;
+        --page) opts+=(--page "${2:?--page needs part of the page address or title}"); shift 2 ;;
+        --keyboard) opts+=(--keyboard); shift ;;
+        -*) echo "agent-box: unknown option $1" >&2; exit 2 ;;
         *) name="$1"; shift ;;
       esac
     done
+    [ "$enter" = 1 ] && opts+=(--enter)
+    [ "$enter" = 1 ] && [ "$field" = password ] && opts+=(--clear-after 3)
+    rc=0
     if [ -n "$file" ]; then
       [ -f "$file" ] || { echo "agent-box: no such file" >&2; exit 2; }
-      in_box "$NAME" env DISPLAY=:1 xdotool search --onlyvisible --class chromium windowactivate --sync %1 >/dev/null 2>&1 || true
-      tr -d '\r\n' < "$file" | in_box -i "$NAME" env DISPLAY=:1 xdotool type --clearmodifiers --delay 15 --file -
+      tr -d '\r\n' < "$file" | in_box -i -u agent "$NAME" env DISPLAY=:1 box-type --kind "$field" --url "$url" ${opts[@]+"${opts[@]}"} || rc=$?
     else
-      [ -n "$name" ] || { echo "usage: agent-box type-secret <name> [--username|--totp] [--no-enter]" >&2; exit 2; }
-      vault type "$name" "$field" || exit 1
+      [ -n "$name" ] || { echo "usage: agent-box type-secret <name> [--username|--totp] [--no-enter] [--page <text>]" >&2; exit 2; }
+      vault type "$name" "$field" ${opts[@]+"${opts[@]}"} || rc=$?
     fi
-    if [ "$enter" = 0 ]; then
-      [ "$field" = password ] && echo "agent-box: typed it; submit the form before any snapshot (snapshots show password fields)" || echo "agent-box: typed it"
-    else
-      in_box "$NAME" env DISPLAY=:1 xdotool key Return
-      if [ "$field" = password ]; then
-        sleep 3
-        in_box -i "$NAME" python3 - <<'PY' 2>/dev/null || true
-import json, urllib.request, websocket
-js = ("document.querySelectorAll('input[type=password]').forEach(i => { if (i.value) {"
-      " i.value = ''; i.dispatchEvent(new Event('input', {bubbles: true})); } })")
-for t in json.load(urllib.request.urlopen("http://127.0.0.1:9222/json/list", timeout=2)):
-    if t.get("type") != "page":
-        continue
-    try:
-        ws = websocket.create_connection(t["webSocketDebuggerUrl"], timeout=3)
-        ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {"expression": js}}))
-        ws.recv(); ws.close()
-    except Exception:
-        pass
-PY
-      fi
-      echo "agent-box: typed it and pressed Enter"
+    [ "$rc" = 0 ] || exit "$rc"
+    if [ "$enter" = 0 ] && [ "$field" = password ]; then
+      echo "agent-box: submit the form before any snapshot (snapshots show password fields)"
     fi ;;
   off)
     # Stop the box, and the container service or VM when nothing else uses it.

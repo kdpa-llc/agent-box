@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Type a secret into the field the agent focused, through Chromium's DevTools
+protocol (CDP), inside the box.
+
+The value comes on stdin, so it never shows up in a command line. Instead of
+typing into whatever window is in front, this finds the one page whose focused
+element is the right kind of field, on the entry's site when the entry has a
+web address, and types into that page only. Another agent's tab, a tab the
+user switched to, or a search box can't receive the password.
+
+  box-type --kind password|username|totp [--url URL] [--page TEXT]
+           [--enter] [--clear-after SECONDS] [--keyboard]
+
+Exit codes: 0 typed; 3 no focused field of that kind; 4 more than one;
+5 the field is on another site; 1 anything else.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+import websocket
+
+CDP = "http://127.0.0.1:9222"
+os.environ.setdefault("DISPLAY", ":1")   # for --keyboard
+
+# Where the focus is in a page: descend into same-origin frames and open
+# shadow roots. A focused frame from another origin can't be looked into.
+PROBE = r"""
+(() => {
+  let doc = document, el = document.activeElement, crossFrame = false;
+  while (el && (el.tagName === 'IFRAME' || el.tagName === 'FRAME')) {
+    let inner = null;
+    try { inner = el.contentDocument; } catch (e) { inner = null; }
+    if (!inner) { crossFrame = true; break; }
+    doc = inner; el = inner.activeElement;
+  }
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+  const isInput = !!el && el.tagName === 'INPUT';
+  return JSON.stringify({
+    type: isInput ? (el.type || 'text').toLowerCase() : null,
+    editable: isInput && !el.readOnly && !el.disabled,
+    length: isInput ? el.value.length : null,
+    host: doc.location ? doc.location.hostname : '',
+    crossFrame: crossFrame,
+    title: document.title,
+    url: location.href,
+  });
+})()
+"""
+
+# Empty every password field in the page, its same-origin frames and open
+# shadow roots: page snapshots include the text of password fields.
+CLEAR = r"""
+(() => {
+  let n = 0;
+  const walk = (root) => {
+    root.querySelectorAll('input[type=password]').forEach((i) => {
+      if (i.value) { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); n++; }
+    });
+    root.querySelectorAll('*').forEach((e) => { if (e.shadowRoot) walk(e.shadowRoot); });
+    root.querySelectorAll('iframe,frame').forEach((f) => {
+      try { if (f.contentDocument) walk(f.contentDocument); } catch (e) {}
+    });
+  };
+  walk(document);
+  return n;
+})()
+"""
+
+FIELD_TYPES = {
+    "password": {"password"},
+    "username": {"text", "email", "tel"},
+    "totp": {"text", "tel", "number"},
+}
+
+
+class Page:
+    def __init__(self, target):
+        self.target = target
+        self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=5)
+        self.next_id = 0
+
+    def call(self, method, params=None):
+        self.next_id += 1
+        self.ws.send(json.dumps({"id": self.next_id, "method": method, "params": params or {}}))
+        while True:
+            msg = json.loads(self.ws.recv())
+            if msg.get("id") == self.next_id:
+                if "error" in msg:
+                    raise RuntimeError(msg["error"].get("message", "CDP error"))
+                return msg.get("result", {})
+
+    def evaluate(self, expression):
+        result = self.call("Runtime.evaluate", {"expression": expression, "returnByValue": True})
+        return result.get("result", {}).get("value")
+
+    def close(self):
+        try:
+            self.ws.close()
+        except Exception:
+            pass
+
+
+def norm_host(host):
+    host = (host or "").lower().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def same_site(page_host, entry_host):
+    """The entry's site, a subdomain of it, or a parent of a more specific entry."""
+    p, e = norm_host(page_host), norm_host(entry_host)
+    return bool(p) and (p == e or p.endswith("." + e) or e.endswith("." + p))
+
+
+def entry_host(url):
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "https://" + url
+    try:
+        return urllib.parse.urlparse(url).hostname or ""
+    except Exception:
+        return ""
+
+
+def type_keys(page, text):
+    # Key by key, like a person, so sites that react to key events (such as
+    # one-character-per-box code fields) behave as usual.
+    for ch in text:
+        if " " <= ch <= "~":
+            code = ord(ch.upper()) if ch.isalnum() else 0
+            page.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": ch, "text": ch,
+                                                 "unmodifiedText": ch, "windowsVirtualKeyCode": code})
+            page.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": ch, "windowsVirtualKeyCode": code})
+        else:
+            page.call("Input.insertText", {"text": ch})
+
+
+def press_enter(page):
+    key = {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13}
+    page.call("Input.dispatchKeyEvent", dict(key, type="keyDown", text="\r", unmodifiedText="\r"))
+    page.call("Input.dispatchKeyEvent", dict(key, type="keyUp"))
+
+
+def describe(info):
+    host = info.get("host") or "(no site)"
+    title = (info.get("title") or "").strip() or info.get("url", "")[:60]
+    return f"{host}: {title}"
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Type stdin into the focused field of the right page.")
+    ap.add_argument("--kind", choices=sorted(FIELD_TYPES), default="password")
+    ap.add_argument("--url", default="", help="the entry's web address; the field must be on that site")
+    ap.add_argument("--page", default="", help="part of the page's address or title, to pick between pages")
+    ap.add_argument("--enter", action="store_true", help="press Enter afterwards")
+    ap.add_argument("--clear-after", type=float, default=0, help="then empty password fields after this many seconds")
+    ap.add_argument("--keyboard", action="store_true",
+                    help="for a field inside a frame from another site: bring its page to the front and type "
+                         "with the desktop keyboard")
+    args = ap.parse_args()
+
+    value = sys.stdin.read().rstrip("\r\n")
+    if not value:
+        print("box-type: nothing to type", file=sys.stderr)
+        return 1
+
+    try:
+        targets = json.load(urllib.request.urlopen(CDP + "/json/list", timeout=3))
+    except Exception as exc:
+        print(f"box-type: can't reach the browser ({exc})", file=sys.stderr)
+        return 1
+
+    want_host = entry_host(args.url)
+    fields, framed, elsewhere = [], [], []
+    for target in targets:
+        if target.get("type") != "page":
+            continue
+        try:
+            page = Page(target)
+        except Exception:
+            continue
+        try:
+            info = json.loads(page.evaluate(PROBE) or "{}")
+        except Exception:
+            page.close()
+            continue
+        info["url"] = info.get("url") or target.get("url", "")
+        if args.page and args.page not in info["url"] and args.page not in (info.get("title") or ""):
+            page.close()
+            continue
+        if info.get("type") in FIELD_TYPES[args.kind] and info.get("editable"):
+            if want_host and not same_site(info.get("host"), want_host):
+                elsewhere.append(info)
+                page.close()
+            else:
+                fields.append((page, info))
+        elif info.get("crossFrame"):
+            framed.append((page, info))
+        else:
+            page.close()
+
+    kind = {"password": "password field", "username": "username or email field", "totp": "code field"}[args.kind]
+
+    if len(fields) > 1:
+        print(f"box-type: {len(fields)} pages have a {kind} focused; nothing typed. "
+              "Pick one with --page <part of its address>:", file=sys.stderr)
+        for _, info in fields:
+            print("  " + describe(info), file=sys.stderr)
+        return 4
+
+    if not fields:
+        if framed and args.keyboard and len(framed) == 1 and \
+                (not want_host or same_site(framed[0][1].get("host"), want_host)):
+            page, info = framed[0]
+            page.call("Page.bringToFront")
+            time.sleep(0.5)
+            subprocess.run(["xdotool", "type", "--clearmodifiers", "--delay", "15", "--file", "-"],
+                           input=value.encode(), check=True)
+            if args.enter:
+                subprocess.run(["xdotool", "key", "Return"], check=True)
+            print(f"box-type: typed it with the keyboard into {describe(info)}")
+            return 0
+        if elsewhere:
+            print(f"box-type: the focused {kind} is on {elsewhere[0].get('host') or 'a page with no site'}, "
+                  f"but this entry is for {want_host}; nothing typed.", file=sys.stderr)
+            return 5
+        if framed:
+            print(f"box-type: the focus is inside a frame from another site on {describe(framed[0][1])}, "
+                  "where the field can't be checked; nothing typed. If that frame is the sign-in form, "
+                  "run again with --keyboard.", file=sys.stderr)
+            return 3
+        print(f"box-type: no page has a {kind} focused; nothing typed. Click the field first "
+              "(playwright-cli click <ref>), then run this again.", file=sys.stderr)
+        return 3
+
+    page, info = fields[0]
+    type_keys(page, value)
+    after = json.loads(page.evaluate(PROBE) or "{}")
+    if args.kind == "password" and after.get("type") == "password" and after.get("length") != len(value):
+        print(f"box-type: warning: the field holds {after.get('length')} characters, not {len(value)}; "
+              "the site may have rejected some keys.", file=sys.stderr)
+    if args.enter:
+        press_enter(page)
+    print(f"box-type: typed it into {describe(info)}" + (" and pressed Enter" if args.enter else ""))
+    if args.clear_after > 0:
+        time.sleep(args.clear_after)
+        try:
+            page.evaluate(CLEAR)
+        except Exception:
+            pass   # the page may have closed after signing in
+    page.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

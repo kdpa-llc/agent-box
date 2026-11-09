@@ -20,8 +20,9 @@ RUN mkdir -p /etc/chromium/policies/managed \
     && printf '{"PasswordManagerEnabled": false}\n' > /etc/chromium/policies/managed/agent-box.json
 
 RUN useradd -m -u 1000 -s /bin/bash agent && mkdir -p /data && chown agent:agent /data
-COPY entrypoint.sh box-quit-browser box-vault /usr/local/bin/
-RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/box-quit-browser /usr/local/bin/box-vault
+COPY entrypoint.sh box-quit-browser box-vault box-type /usr/local/bin/
+RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/box-quit-browser /usr/local/bin/box-vault \
+      /usr/local/bin/box-type
 # Taskbar with a "Passwords" button, and KeePassXC settings (no tray, no update
 # checks, never locks by itself, saves after every change).
 COPY desktop/tint2rc /etc/xdg/tint2/agent-box.tint2rc
