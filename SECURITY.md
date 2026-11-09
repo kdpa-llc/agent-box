@@ -53,7 +53,7 @@ When using Agent Box:
 1. **Keep Updated**: Run `npm install -g kdpa-agent-box` and `agent-box setup` now and then
 2. **Store Low-Risk Accounts Only**: Use the vault for test or low-risk accounts, never for your email, bank or cloud admin accounts
 3. **Keep the Ports Local**: The browser-control port and the viewer listen on 127.0.0.1 only. Don't forward or publish them
-4. **Share the Viewer Privately**: Use Tailscale Serve, which reaches only your own devices, rather than a public tunnel. Never use Tailscale Funnel for the viewer
+4. **Share the Viewer Privately**: Use Tailscale Serve, which reaches only your tailnet (every device and person its access rules allow), rather than a public tunnel. Never use Tailscale Funnel for the viewer
 5. **Trust Your Agents**: Everything the box can reach, the agents driving it can reach too
 
 ### For Contributors
@@ -70,13 +70,15 @@ When using Agent Box:
 - The vault is a KeePassXC database (AES-256, Argon2) at `/data/vault/vault.kdbx` in the box's storage
 - It unlocks with a random master password kept next to it, so agents can log in while you're away. Anything that can read the box's files can open the vault
 - `agent-box type-secret` looks up and types an entry inside the box, so its value doesn't reach the agent's commands, output or chat
-- Page snapshots show the text of password fields. `type-secret` clears password fields about 3 seconds after typing a password, but an agent that reads a field before then, or one typed with `--no-enter`, sees the value
+- It types over CDP into the one page whose focused field is the right kind (a password field for a password), on the site saved with the entry. It refuses, typing nothing, when the field is on another site, when no such field is focused, or when two pages qualify. So a password can't land in another agent's tab, a search box, or a look-alike site. Entries saved without a web address skip the site check
+- Page snapshots show the text of password fields. `type-secret` empties the password fields on that page about 3 seconds after typing a password, but an agent that reads a field before then, or one typed with `--no-enter`, sees the value
 - The vault keeps passwords out of agents' context and logs. It isn't a wall against an agent that sets out to read them
 
 ### Browser Control and the Viewer
 
-- Chromium's remote-control port (CDP) gives full control of the browser, including its cookies. It's published on 127.0.0.1 only, so any local process on the machine can use it
-- The VNC viewer has no password and is published on 127.0.0.1 only. Anyone who can reach it can see and use the desktop
+- Chromium's remote-control port (CDP) gives full control of the browser, including its cookies. It's published on 127.0.0.1 only, so any local process on the machine can use it. Chromium refuses CDP connections from web pages
+- The viewer is published on 127.0.0.1 only and has a VNC password (8 random characters, kept in the box's storage). The viewer's start page passes it on only when opened in its own tab, not inside another page's frame, so a web page open on the same machine can neither connect to the desktop nor show it to you in a frame. Programs on the machine itself can read the start page
+- The box runs on its own container network (`agent-box`), so other containers can't reach its browser-control or viewer ports
 - Chromium's own password manager is turned off by policy, so passwords live only in the vault
 
 ### Isolation
@@ -85,10 +87,11 @@ When using Agent Box:
 - With Docker or Podman on Linux, the box is a container sharing the host's kernel. On macOS they run it inside their own Linux VM
 - Chromium keeps its sandbox. Under Docker and Podman, the box runs with [Docker's default seccomp profile](https://github.com/moby/profiles/blob/main/seccomp/default.json) plus the `clone`, `setns` and `unshare` calls the sandbox needs, instead of `--no-sandbox`. That's the same change [Playwright's profile](https://github.com/microsoft/playwright/blob/main/utils/docker/seccomp_profile.json) makes; `npm run update:seccomp` regenerates it
 - The box runs Chromium as an unprivileged user (`agent`)
+- The image is rebuilt with current Debian packages when it's over 14 days old (`BOX_REFRESH_DAYS`), and every `agent-box build` fetches current packages, so Chromium gets security updates
 
 ### The Front Door (macOS)
 
-- `agent-box door on` installs a login service that listens on 127.0.0.1:6080 and starts the box when that address is opened
+- `agent-box door on` installs a login service that listens on 127.0.0.1:6080 and starts the box when that address is opened. It starts the box only for a page someone opened (a navigation), not for a request a web page makes in the background
 
 ## Security Updates
 
