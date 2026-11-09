@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.1.0](https://github.com/kdpa-llc/agent-box/compare/v1.0.1...v1.1.0) (2026-11-09)
+
+### Features
+
+* keep downloads (files, get), hold the box awake, restore the last session, add doctor ([3b24091](https://github.com/kdpa-llc/agent-box/commit/3b2409163c43b9edcd498ec18732f6ae58d2cd13))
+* **up:** prepare images in the background, refresh them, lock starts, use the local time zone ([e4fabd9](https://github.com/kdpa-llc/agent-box/commit/e4fabd9028ee774fd24dbece88bccba0147ea7f4))
+
+### Bug Fixes
+
+* **door:** start the box only for page visits, and show why a start failed ([ef9a817](https://github.com/kdpa-llc/agent-box/commit/ef9a8170c384bedb0b02c9bc95eab0938d615f79))
+* **release:** release only the commit CI tested ([53ef1c4](https://github.com/kdpa-llc/agent-box/commit/53ef1c4907e86e533ff69c168abc3f35a678d6ea))
+* **vault:** type secrets only into a focused field of the right kind, on the entry's site ([429143c](https://github.com/kdpa-llc/agent-box/commit/429143c36361092b3cdc618886ed6d9991a7ed96))
+* **viewer:** require a password, passed on only to the viewer's own tab ([db6c47e](https://github.com/kdpa-llc/agent-box/commit/db6c47e7c5a4d00a59df586df179a5ac723942f6))
+
+### Documentation
+
+* explain downloads, uploads, hold, doctor and the stricter type-secret; close tabs safely ([2969281](https://github.com/kdpa-llc/agent-box/commit/2969281ccc0fae6442c1b08fec3d8e44464406b2))
+
 ## [1.0.1](https://github.com/kdpa-llc/agent-box/compare/v1.0.0...v1.0.1) (2026-11-08)
 
 ### Bug Fixes
