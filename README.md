@@ -163,6 +163,7 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 - **Agents** reach Chromium's remote-control port (CDP) on 127.0.0.1:9222. **You** reach the desktop through noVNC on 127.0.0.1:6080, with a password its own start page fills in.
 - **Storage:** the browser profile, its last session, downloads and the vault live in a volume (`agent-box-data`) that outlives the box.
 - **Idle stop:** a watchdog counts viewer connections, browser-control traffic and holds. After 20 quiet minutes it quits Chromium cleanly, so logins are saved, and the box exits.
+- **Tab cleanup:** every agent shares the box's memory, and a tab left open by a finished or crashed agent stays there. `box-tidy` watches from inside the box. When less than 15% of memory is free, it closes the tabs that have been idle longest, one at a time, until 25% is free. Every few minutes it also closes tabs idle for three hours, unless a person is connected to the viewer. Idle means the address and title haven't changed. It never closes a tab that holds something typed into a form, and never the last tab. Each closure goes to `agent-box logs` and `agent-box tidy log` with the address, so the tab can be opened again. If memory still runs out, `earlyoom` stops the single hungriest tab, which shows "Aw, Snap", instead of letting the whole box freeze.
 - **Images:** `agent-box up` builds the image in the background when it's missing, and rebuilds it with current packages when it's over 14 days old, so the browser gets security updates.
 
 | File                                  | What it does                                                          |
@@ -173,6 +174,7 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 | `entrypoint.sh`                       | Starts the screen, viewer, Chromium and the idle watchdog             |
 | `box-vault`                           | The password vault inside the box (KeePassXC)                         |
 | `box-type`                            | Types a vault entry into the right page and field, over CDP           |
+| `box-tidy`                            | Lists tabs and closes idle ones, by age or when memory runs short     |
 | `box-quit-browser`                    | Closes Chromium cleanly; a plain stop signal kills it before it saves |
 | `desktop/`                            | Taskbar and KeePassXC settings                                        |
 | `chromium-seccomp.json`               | Lets Chromium keep its sandbox under Docker and Podman; regenerate it with `npm run update:seccomp` |
@@ -194,6 +196,8 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 | `agent-box files`                                                | Downloads the box saved, newest first                                   |
 | `agent-box get <name>\|--latest [dest]`                          | Copy a download out of the box                                          |
 | `agent-box hold <minutes>`                                       | Keep the box awake that long even when idle; `0` ends it                |
+| `agent-box tabs`                                                 | Open tabs, longest idle first, and free memory                          |
+| `agent-box tidy [minutes]`                                       | Close tabs idle that long (default 60); `tidy log` shows what was closed |
 | `agent-box doctor`                                               | Check the setup and say how to fix what's wrong                         |
 | `agent-box runtime`                                              | The container tool in use                                               |
 | `agent-box build`                                                | Rebuild the image with current packages                                 |
@@ -210,6 +214,8 @@ Settings (environment variables for `agent-box up`):
 | ------------------------------- | --------------------------------- |
 | `BOX_IDLE_MINUTES`              | 20 (0 means never stop by itself) |
 | `BOX_MEMORY`                    | 2G                                |
+| `BOX_TAB_STALE_MINUTES`         | 180 (close tabs idle this long; 0 never) |
+| `BOX_TAB_FLOOR_PERCENT`         | 15 (close idle tabs when less memory than this is free) |
 | `BOX_CPUS`                      | 2                                 |
 | `BOX_WIDTH` × `BOX_HEIGHT`      | 1280×800                          |
 | `BOX_CDP_PORT`, `BOX_VIEW_PORT` | 9222, 6080                        |
@@ -252,6 +258,8 @@ agent-box logs
 - **"docker isn't running":** start Docker Desktop or OrbStack, or `colima start`. With Colima chosen in setup, `agent-box up` starts it for you.
 - **The phone saves a file instead of showing the viewer:** the box is off. Run `agent-box up`, or `agent-box door on` on a Mac.
 - **A port is already in use:** set `BOX_CDP_PORT` and `BOX_VIEW_PORT`.
+- **A tab disappeared:** `agent-box tidy log` lists the tabs the box closed, when and why. To keep idle tabs longer, raise `BOX_TAB_STALE_MINUTES`. If tabs are closed for lack of memory, give the box more with `BOX_MEMORY`.
+- **A tab shows "Aw, Snap":** the box ran out of memory and stopped that tab to stay alive. Close tabs you don't need (`agent-box tabs`), or raise `BOX_MEMORY`.
 - **The build fails for lack of space:** Apple's `container` needs about 5 GB free while it builds.
 - **Agents don't know the box:** start a new session after setup, and check that the skill link exists in your agent's skills folder.
 

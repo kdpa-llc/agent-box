@@ -28,6 +28,15 @@ if [ "$(id -u)" = 0 ]; then
 </script>
 <noscript>The viewer needs JavaScript.</noscript>
 EOF
+  # Last resort against a frozen box. When memory runs out, Linux keeps reading
+  # program pages back from disk instead of stopping anything, and every tab of
+  # every agent hangs. earlyoom stops the single most memory-hungry process
+  # first, which is a browser tab (it shows "Aw, Snap"); the desktop and the
+  # browser itself stay up. box-tidy closes idle tabs well before this point.
+  if command -v earlyoom >/dev/null; then
+    earlyoom -m 5 -r 3600 --prefer '^chromium$' \
+      --avoid '^(Xvfb|x11vnc|websockify|openbox|tint2|socat|keepassxc|bash|python3)$' >/tmp/earlyoom.log 2>&1 &
+  fi
   export HOME=/home/agent USER=agent
   exec setpriv --reuid=agent --regid=agent --init-groups "$0" "$@"
 fi
@@ -66,6 +75,11 @@ rm -f /tmp/box-stopping
     log "chromium exited, restarting"; sleep 1
   done
 ) &
+
+# Tab hygiene: note which tabs change, close the longest-idle ones when memory
+# runs short, and close tabs nobody has touched for TAB_STALE_MINUTES. What it
+# closes is printed here, so `agent-box logs` shows it. See box-tidy.
+( while [ ! -e /tmp/box-stopping ]; do box-tidy watch || true; sleep 5; done ) &
 
 shutdown() {
   log "stopping: closing Chromium cleanly"

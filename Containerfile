@@ -8,7 +8,7 @@ LABEL agent-box=true org.opencontainers.image.source=https://github.com/kdpa-llc
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb x11vnc novnc python3-websockify openbox tint2 keepassxc-minimal \
-      chromium xdotool scrot socat iproute2 procps ca-certificates python3-websocket \
+      chromium xdotool scrot socat iproute2 procps ca-certificates python3-websocket earlyoom \
       fonts-liberation fonts-dejavu-core fonts-noto-color-emoji xterm \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/*
 
@@ -26,9 +26,9 @@ RUN mkdir -p /etc/chromium/policies/managed \
          > /etc/chromium/policies/managed/agent-box.json
 
 RUN useradd -m -u 1000 -s /bin/bash agent && mkdir -p /data && chown agent:agent /data
-COPY entrypoint.sh box-quit-browser box-vault box-type /usr/local/bin/
+COPY entrypoint.sh box-quit-browser box-vault box-type box-tidy /usr/local/bin/
 RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/box-quit-browser /usr/local/bin/box-vault \
-      /usr/local/bin/box-type
+      /usr/local/bin/box-type /usr/local/bin/box-tidy
 # Taskbar with a "Passwords" button, and KeePassXC settings (no tray, no update
 # checks, never locks by itself, saves after every change).
 COPY desktop/tint2rc /etc/xdg/tint2/agent-box.tint2rc

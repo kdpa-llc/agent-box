@@ -122,6 +122,28 @@ case "$tz:$got" in "$tz:\"$tz\""|UTC:\"Etc/UTC\"|Etc/UTC:\"UTC\") ;; *) fail "br
 "$BOX" hold 0 >/dev/null
 { "$BOX" doctor || true; } | grep "ok   box is running" >/dev/null || fail "doctor does not see the box"
 
+step "tab cleanup: idle tabs are closed; typed input and the last tab are kept"
+"$BOX" exec pgrep -f 'box-tidy watch' >/dev/null || fail "the tab watcher isn't running"
+"$BOX" exec pgrep -x earlyoom >/dev/null || fail "earlyoom isn't running"
+pw tab-new https://example.net/ >/dev/null                     # a tab nobody typed in
+pw tab-new https://example.org/ >/dev/null
+result "() => { document.body.insertAdjacentHTML('beforeend', '<input aria-label=draft>'); document.querySelector('[aria-label=draft]').value = 'unsent'; return 'typed' }" >/dev/null
+"$BOX" tabs | grep 'typed input' | grep 'example.org' >/dev/null || fail "'tabs' doesn't mark the tab with typed input"
+"$BOX" tidy 0 >/dev/null
+"$BOX" tabs | grep 'example.org' >/dev/null || fail "tidy closed a tab with typed input"
+if "$BOX" tabs | grep 'example.net' >/dev/null; then fail "tidy left an idle tab open"; fi
+"$BOX" tidy log | grep 'closed example.net' >/dev/null || fail "the log doesn't name the closed tab"
+# Memory pressure, simulated with a floor no box can meet: idle tabs go, the typed one stays.
+pw tab-new https://example.net/ >/dev/null
+out=$("$BOX" exec box-tidy pressure --floor-mb 999999 --goal-mb 999999 --grace 0)
+[[ "$out" == *"closed example.net"* ]] || fail "memory pressure didn't close the idle tab: $out"
+"$BOX" tabs | grep 'example.org' >/dev/null || fail "memory pressure closed a tab with typed input"
+# Even with --force, which also closes tabs holding typed input, one tab always stays.
+"$BOX" exec box-tidy run --older-than 0 --force >/dev/null
+[ "$("$BOX" tabs | head -n 1 | cut -d' ' -f1)" = 1 ] || fail "expected exactly one tab left: $("$BOX" tabs | head -n 1)"
+pw tab-new >/dev/null
+pw goto https://example.com >/dev/null
+
 step "logins survive a restart, session-only ones too"
 result "() => { document.cookie = 'smoke=kept; max-age=3600; path=/'; document.cookie = 'session=kept; path=/'; return document.cookie }" >/dev/null
 pw detach >/dev/null
