@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.3.0](https://github.com/kdpa-llc/agent-box/compare/v1.2.0...v1.3.0) (2026-11-12)
+
+### Features
+
+* close idle tabs before the box runs out of memory ([08cb294](https://github.com/kdpa-llc/agent-box/commit/08cb294b111d6668aa3aee2663124392a61ac7d8))
+
+### Bug Fixes
+
+* ship box-tidy in the npm package ([b7bf29a](https://github.com/kdpa-llc/agent-box/commit/b7bf29a657e366f0b34bd70a2fb0ef8606fe36dc))
+
 ## [1.2.0](https://github.com/kdpa-llc/agent-box/compare/v1.1.0...v1.2.0) (2026-11-09)
 
 ### Features
