@@ -37,6 +37,9 @@ playwright-cli -s=hn-top detach                         # leaves the browser run
 - If `agent-box up` says it's preparing the image (exit code 75, after a fresh install or an update), wait a minute and run it again. It doesn't block longer than about 2 minutes.
 - `attach` lands on a tab that already exists, usually the user's own. Run `tab-new` before any click, fill or snapshot.
 - Close your tabs with `tab-close` and no number, once per tab you opened. Don't close by index: indexes shift when other agents open or close tabs, so a number can hit someone else's tab.
+- Close each tab as soon as you are done with it, not at the end of your task. Open one tab at a time. All agents share about 2 GB, a heavy page takes 100 to 300 MB, and a full box freezes for everyone. A finished sign-in keeps its cookies without the tab.
+- `agent-box tabs` lists the open tabs, longest idle first, with free memory. Check it before opening a heavy page.
+- The box cleans up after agents that don't. Under memory pressure it closes the longest-idle tabs, and it closes tabs idle for three hours. It never closes a tab with something typed into a form. If your tab is gone, `agent-box tidy log` says when and why, with the address to reopen.
 - `snapshot` prints the page's structure, or for a big page a link to a file in `./.playwright-cli/`. `find "<text>"` is usually quicker: it prints only the matching part, with refs.
 - Run `playwright-cli` from a scratch folder, because it writes its files to `./.playwright-cli/`. `playwright-cli --help` lists every command, and its first line names its own skill file.
 - Playwright scripts can use `chromium.connectOverCDP('http://127.0.0.1:9222')` and the first existing context. Disconnect at the end; don't close the browser. For downloads, use `playwright-cli` and the commands below.
@@ -82,6 +85,6 @@ The box has its own password manager, KeePassXC, with one encrypted vault inside
 ## Rules
 
 - The box is shared. Don't run `agent-box down`, `off`, `build` or `uninstall` unless the user asks; the box stops by itself after 20 minutes idle.
-- Close only the tabs you opened, and end any hold you set.
+- Close only the tabs you opened, close them as soon as you are done, and end any hold you set.
 - The vault is for test or low-risk accounts the user chose to store. Don't open its files or read entries in other ways than `type-secret`.
 - If something about the box itself fails, `agent-box doctor` says what and how to fix it.

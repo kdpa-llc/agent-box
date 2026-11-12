@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""Keep the box's memory low: see what tabs are open, close the ones nobody is
+using, and close idle tabs when memory runs short, before the box freezes.
+
+  box-tidy list                     tabs, longest idle first
+  box-tidy run [--older-than MIN]   close tabs idle that long (default 60)
+  box-tidy pressure                 close idle tabs if memory is short
+  box-tidy watch                    what the box runs all the time (see below)
+  box-tidy log                      what was closed, when and why
+
+All agents share one browser and one memory limit, and nobody owns cleanup. A
+tab left open by a finished or crashed agent stays until the box runs out of
+memory, and then every tab of every agent stops. `watch` prevents that:
+
+- When free memory falls under TAB_FLOOR_PERCENT (15), it closes the tabs that
+  have been idle longest, one at a time, until TAB_GOAL_PERCENT (25) is free.
+- Every few minutes it closes tabs idle for TAB_STALE_MINUTES (180; 0 = never),
+  unless a person is connected to the viewer.
+
+"Idle" means the tab's address and title have not changed. A tab is never
+closed while it holds something typed into a form, and the last tab is never
+closed. Every closure is printed and kept in the log, with the address, so the
+tab can be opened again.
+"""
+import argparse
+import fcntl
+import json
+import os
+import pwd
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+CDP = "http://127.0.0.1:9222"
+STATE = "/tmp/box-tidy.json"
+LOG = "/tmp/box-tidy.log"
+LOCK = "/tmp/box-tidy.lock"
+
+# True when the page holds something a person or agent typed or picked and has
+# not sent yet. Reloading or closing such a page loses work.
+TYPED = r"""
+(() => {
+  try {
+    for (const el of document.querySelectorAll('input, textarea, select')) {
+      if (el.tagName === 'SELECT') {
+        if ([...el.options].some((o) => o.selected !== o.defaultSelected)) return true;
+      } else if (el.type === 'checkbox' || el.type === 'radio') {
+        if (el.checked !== el.defaultChecked) return true;
+      } else if (el.type === 'file') {
+        if (el.files && el.files.length) return true;
+      } else if (!['hidden', 'submit', 'button', 'reset', 'image'].includes(el.type)) {
+        if (el.value !== el.defaultValue) return true;
+      }
+    }
+    return false;
+  } catch (e) { return false; }
+})()
+"""
+
+
+def env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def cdp(path, timeout=3):
+    with urllib.request.urlopen(CDP + path, timeout=timeout) as response:
+        return response.read().decode()
+
+
+def memory():
+    """(total, available) in MB. Inside a container with a memory limit, the
+    limit counts, not the host's memory."""
+    info = {}
+    with open("/proc/meminfo") as f:
+        for line in f:
+            key, _, rest = line.partition(":")
+            info[key] = int(rest.split()[0]) / 1024
+    total, available = info["MemTotal"], info["MemAvailable"]
+    try:
+        with open("/sys/fs/cgroup/memory.max") as f:
+            limit = f.read().strip()
+        if limit != "max":
+            limit = int(limit) / 1048576
+            with open("/sys/fs/cgroup/memory.current") as f:
+                current = int(f.read()) / 1048576
+            cache = 0
+            with open("/sys/fs/cgroup/memory.stat") as f:
+                for line in f:
+                    if line.startswith("inactive_file "):
+                        cache = int(line.split()[1]) / 1048576
+            total = min(total, limit)
+            available = min(available, limit - (current - cache))
+    except (OSError, ValueError):
+        pass
+    return total, max(available, 0)
+
+
+class Locked:
+    """One box-tidy at a time decides what to close."""
+
+    def __enter__(self):
+        self.f = open(LOCK, "w")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+
+    def __exit__(self, *_):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+def observe():
+    """The open tabs, each with when it was first seen and last active."""
+    now = time.time()
+    try:
+        with open(STATE) as f:
+            seen = json.load(f)
+    except (OSError, ValueError):
+        seen = {}
+    tabs, keep = [], {}
+    for tab in json.loads(cdp("/json/list")):
+        if tab.get("type") != "page":
+            continue
+        old = seen.get(tab["id"])
+        if not old:
+            entry = {"first": now, "active": now}
+        elif old.get("url") != tab.get("url") or old.get("title") != tab.get("title"):
+            entry = {"first": old["first"], "active": now}
+        else:
+            entry = {"first": old["first"], "active": old["active"]}
+        entry.update(url=tab.get("url", ""), title=tab.get("title", ""))
+        keep[tab["id"]] = entry
+        tabs.append(dict(tab, first=entry["first"], active=entry["active"]))
+    tmp = STATE + ".%d" % os.getpid()
+    with open(tmp, "w") as f:
+        json.dump(keep, f)
+    os.replace(tmp, STATE)
+    return tabs, now
+
+
+def typed_input(tab):
+    """Whether the page holds unsent form input. None if the page won't say."""
+    import websocket
+    try:
+        ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=2)
+    except Exception:
+        return None
+    try:
+        ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
+                            "params": {"expression": TYPED, "returnByValue": True}}))
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            msg = json.loads(ws.recv())
+            if msg.get("id") == 1:
+                return bool(msg.get("result", {}).get("result", {}).get("value"))
+    except Exception:
+        return None
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
+    return None
+
+
+def where(tab):
+    url = tab.get("url", "")
+    try:
+        parts = urllib.parse.urlparse(url)
+        if parts.scheme in ("http", "https"):
+            return (parts.netloc + parts.path)[:70]   # no query: it can carry tokens
+    except ValueError:
+        pass
+    return url[:40]
+
+
+def idle_minutes(tab, now):
+    return int((now - tab["active"]) // 60)
+
+
+def close(tab, now, reason):
+    try:
+        ok = "closing" in cdp("/json/close/" + tab["id"]).lower()
+    except Exception:
+        ok = False
+    if not ok:
+        return False
+    line = "%s closed %s | idle %dm | %s" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                              where(tab), idle_minutes(tab, now), reason)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+    print("box-tidy: " + line.split(" ", 1)[1], flush=True)
+    return True
+
+
+def sweep(tabs, now, may_close, reason, enough=lambda: False, force=False):
+    """Close tabs longest idle first, while `may_close(tab)` allows it and until
+    `enough()`. Returns (closed, kept because of typed input)."""
+    closed, typed = 0, 0
+    left = len(tabs)
+    for tab in sorted(tabs, key=lambda t: t["active"]):
+        if left <= 1 or enough():
+            break
+        if not may_close(tab):
+            continue
+        if not force and typed_input(tab):
+            typed += 1
+            continue
+        if close(tab, now, reason):
+            closed += 1
+            left -= 1
+            time.sleep(1.5)   # let the memory come back before judging again
+    return closed, typed
+
+
+def cmd_list(_):
+    tabs, now = observe()
+    total, available = memory()
+    print("%d tabs, %d of %d MB free" % (len(tabs), available, total))
+    for tab in sorted(tabs, key=lambda t: t["active"]):
+        note = "typed input" if typed_input(tab) else ""
+        print("%5dm  %-11s  %s  \"%s\"" % (idle_minutes(tab, now), note, where(tab), tab.get("title", "")[:50]))
+    return 0
+
+
+def cmd_run(args):
+    with Locked():
+        tabs, now = observe()
+        if args.dry_run:
+            for tab in sorted(tabs, key=lambda t: t["active"]):
+                if now - tab["active"] >= args.older_than * 60:
+                    print("would close %s (idle %dm)%s" % (where(tab), idle_minutes(tab, now),
+                                                           "  kept: typed input" if typed_input(tab) and not args.force else ""))
+            return 0
+        closed, typed = sweep(tabs, now, lambda t: now - t["active"] >= args.older_than * 60,
+                              "idle %d min or more" % args.older_than, force=args.force)
+    print("box-tidy: closed %d, %d left%s" % (closed, len(tabs) - closed,
+                                             (", kept %d with typed input" % typed) if typed else ""))
+    return 0
+
+
+def pressure(floor_mb=None, goal_mb=None, grace=None, quiet=False):
+    """Close idle tabs if memory is short. Returns how many it closed."""
+    total, available = memory()
+    floor = floor_mb if floor_mb is not None else total * env_int("TAB_FLOOR_PERCENT", 15) / 100
+    goal = goal_mb if goal_mb is not None else total * env_int("TAB_GOAL_PERCENT", 25) / 100
+    grace = grace if grace is not None else env_int("TAB_GRACE_SECONDS", 120)
+    if available >= floor:
+        return 0
+    with Locked():
+        tabs, now = observe()
+        # A tab that changed in the last two minutes is probably in use right now.
+        closed, typed = sweep(tabs, now, lambda t: now - t["active"] >= grace,
+                              "memory short: %d of %d MB free" % (available, total),
+                              enough=lambda: memory()[1] >= goal)
+    if not closed and not quiet:
+        print("box-tidy: memory short (%d of %d MB free) and no idle tab to close%s" %
+              (available, total, (" (%d hold typed input)" % typed) if typed else ""), flush=True)
+    return closed
+
+
+def cmd_pressure(args):
+    pressure(args.floor_mb, args.goal_mb, args.grace)
+    return 0
+
+
+def viewer_connected():
+    try:
+        out = subprocess.run(["ss", "-Htn", "state", "established", "( sport = :5900 )"],
+                             capture_output=True, text=True, timeout=5).stdout
+        return bool(out.strip())
+    except Exception:
+        return True   # can't tell: assume someone is watching
+
+
+def cmd_watch(_):
+    stale = env_int("TAB_STALE_MINUTES", 180)
+    tick, last_warning = 0, 0
+    while not os.path.exists("/tmp/box-stopping"):
+        time.sleep(5)
+        tick += 1
+        try:
+            total, available = memory()
+            if available < total * env_int("TAB_FLOOR_PERCENT", 15) / 100:
+                quiet = time.time() - last_warning < 300
+                if not pressure(quiet=quiet) and not quiet:
+                    last_warning = time.time()
+            if tick % 6 == 0:            # every 30 s: note which tabs changed
+                observe()
+            if stale > 0 and tick % 60 == 0 and not viewer_connected():   # every 5 min
+                with Locked():
+                    tabs, now = observe()
+                    sweep(tabs, now, lambda t: now - t["active"] >= stale * 60, "idle %d min or more" % stale)
+        except Exception:
+            pass   # the browser is starting or stopping; try again next round
+    return 0
+
+
+def cmd_log(_):
+    try:
+        with open(LOG) as f:
+            sys.stdout.write(f.read())
+    except OSError:
+        print("box-tidy: nothing closed yet")
+    return 0
+
+
+def as_agent():
+    """Always work as the box's own user. `agent-box exec` runs commands as root,
+    and files root leaves in /tmp would lock the watcher out of its own state."""
+    if os.geteuid() != 0:
+        return
+    try:
+        agent = pwd.getpwnam("agent")
+        os.setgroups([])
+        os.setgid(agent.pw_gid)
+        os.setuid(agent.pw_uid)
+    except (KeyError, OSError):
+        pass
+
+
+def main():
+    as_agent()
+    parser = argparse.ArgumentParser(prog="box-tidy", description="Close tabs nobody is using.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("list").set_defaults(run=cmd_list)
+    run = sub.add_parser("run")
+    run.add_argument("--older-than", type=int, default=60, metavar="MIN")
+    run.add_argument("--dry-run", action="store_true")
+    run.add_argument("--force", action="store_true", help="also close tabs that hold typed input")
+    run.set_defaults(run=cmd_run)
+    press = sub.add_parser("pressure")
+    press.add_argument("--floor-mb", type=float)
+    press.add_argument("--goal-mb", type=float)
+    press.add_argument("--grace", type=int, metavar="SECONDS")
+    press.set_defaults(run=cmd_pressure)
+    sub.add_parser("watch").set_defaults(run=cmd_watch)
+    sub.add_parser("log").set_defaults(run=cmd_log)
+    args = parser.parse_args()
+    try:
+        return args.run(args)
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+        print("box-tidy: the browser isn't answering (%s)" % error.__class__.__name__, file=sys.stderr)
+        return 1
+    except OSError as error:
+        print("box-tidy: %s" % error, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

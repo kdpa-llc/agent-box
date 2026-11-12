@@ -157,6 +157,7 @@ agent-box/
 ├── entrypoint.sh              # Starts the screen, viewer, Chromium and idle watchdog
 ├── box-vault                  # Password vault inside the box (KeePassXC)
 ├── box-type                   # Types a vault entry into the right page and field, over CDP
+├── box-tidy                   # Lists tabs and closes idle ones, by age or when memory runs short
 ├── box-quit-browser           # Closes Chromium cleanly so logins are saved
 ├── desktop/                   # Taskbar and KeePassXC settings
 ├── chromium-seccomp.json      # Lets Chromium keep its sandbox under Docker and Podman

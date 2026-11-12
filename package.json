@@ -15,6 +15,7 @@
     "box-quit-browser",
     "box-vault",
     "box-type",
+    "box-tidy",
     "box-door.py",
     "chromium-seccomp.json",
     "agent-box-door.plist",

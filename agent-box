@@ -22,7 +22,7 @@ SKILL="$HERE/skills/agent-box"
 SKILL_DIRS=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" "$HOME/.agents/skills")   # Claude Code; Codex and other agents
 
 # The image tag is a checksum of the files it's built from, so an update rebuilds it.
-BUILD_FILES=(Containerfile entrypoint.sh box-quit-browser box-vault box-type desktop/tint2rc desktop/agent-box-passwords.desktop desktop/keepassxc.ini)
+BUILD_FILES=(Containerfile entrypoint.sh box-quit-browser box-vault box-type box-tidy desktop/tint2rc desktop/agent-box-passwords.desktop desktop/keepassxc.ini)
 TAG=$(cd "$HERE" && cat "${BUILD_FILES[@]}" | cksum | cut -d' ' -f1)
 IMAGE="agent-box:$TAG"
 STAMP="$CACHE/image-$TAG.built"   # when this image was built, for the browser refresh
@@ -243,6 +243,7 @@ start_box() {
   "$RT" run -d --rm --name "$NAME" --init \
     -m "${BOX_MEMORY:-2G}" "${extra[@]}" ${net[@]+"${net[@]}"} --shm-size 1G \
     -e IDLE_MINUTES="${BOX_IDLE_MINUTES:-20}" -e TZ="$(host_tz)" \
+    -e TAB_STALE_MINUTES="${BOX_TAB_STALE_MINUTES:-180}" -e TAB_FLOOR_PERCENT="${BOX_TAB_FLOOR_PERCENT:-15}" \
     -e SCREEN_WIDTH="${BOX_WIDTH:-1280}" -e SCREEN_HEIGHT="${BOX_HEIGHT:-800}" \
     -v "$VOLUME":/data \
     -p "127.0.0.1:$(viewer_port):6080" -p "127.0.0.1:$CDP_PORT:9223" \
@@ -567,6 +568,19 @@ case "${1:-help}" in
       in_box "$NAME" sh -c 'echo $(( $(date +%s) + '"$m"' * 60 )) > /tmp/box-hold-until'
       echo "agent-box: kept awake for $m minutes, even with nothing connected"
     fi ;;
+  tabs)
+    # The open tabs, longest idle first, and how much memory is free.
+    need_box
+    in_box -u agent "$NAME" box-tidy list ;;
+  tidy)
+    # agent-box tidy [minutes]: close tabs idle that long (default 60).
+    # agent-box tidy log: what was closed, when and why.
+    need_box
+    case "${2:-60}" in
+      log) in_box -u agent "$NAME" box-tidy log ;;
+      *[!0-9]*) echo "usage: agent-box tidy [minutes] | agent-box tidy log" >&2; exit 2 ;;
+      *) in_box -u agent "$NAME" box-tidy run --older-than "${2:-60}" ;;
+    esac ;;
   doctor)
     # Check the setup and say how to fix what's wrong.
     bad=0
@@ -659,6 +673,8 @@ agent-box logs     the box's log
 agent-box files    downloads the box saved, newest first
 agent-box get <name>|--latest [dest]   copy a download out of the box
 agent-box hold <minutes>   keep the box awake that long even when idle (0 ends it)
+agent-box tabs     open tabs, longest idle first, and free memory
+agent-box tidy [minutes]   close tabs idle that long (default 60); `tidy log` shows closures
 agent-box doctor   check the setup and say how to fix what's wrong
 agent-box runtime  the container tool in use (container, docker or podman)
 agent-box build    rebuild the image with current packages
@@ -682,7 +698,8 @@ agent-box type-secret <name> [--username | --totp] [--no-enter] [--page <text>]
 Agents: read the agent-box skill. In short: `agent-box up`, then
 `playwright-cli -s=<your-session> attach --cdp=<the browser control address it printed>`,
 drive the page (tab-new, find, click, screenshot), close your tab with
-`playwright-cli -s=<your-session> tab-close` and finish with `detach`.
+`playwright-cli -s=<your-session> tab-close` as soon as you are done with it,
+and finish with `detach`. Everyone shares the box's memory.
 Never put a password in a command, file or chat: use agent-box type-secret.
 EOF
     ;;
