@@ -58,6 +58,7 @@ agent-box pick "Reject all cookies" --page example.com --click   # and click it,
 - `--page` is part of your tab's address or title, and must match one page only (exit 4 otherwise). `--tab <id>` names it by the id in `curl -s http://127.0.0.1:9222/json`.
 - Exit 0: picked, and clicked with `--click`. Exit 3: not sure, nothing clicked; the output lists the next likely elements. Look at the page yourself then.
 - After a click, check the page did what you wanted. A page can word a button to mislead.
+- `--dry-run` shows what would be sent, and sends nothing.
 - It needs a key and costs a little per call. If it says "no key", don't set one up yourself: carry on without it, and tell the user it's available.
 - Never use it to type, and never for sign-in secrets: those go through `type-secret`.
 

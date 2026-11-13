@@ -22,13 +22,15 @@ const server = createServer((req, res) => {
     seen.push({ path: req.url, auth: req.headers.authorization, data });
     const jev = !Array.isArray(data.questions); // Jev's shape, also on OpenRouter
     const q = jev ? data.questions.target : data.questions[0];
-    const options = jev ? Object.entries(q.criteria) : q.choices.map(c => [c.value, c.description]);
-    const goal = q.instructions.split('\n')[0].replace(/^.*do this: /, '');
+    const state = jev ? data.state : JSON.parse(data.input);
+    const options = jev ? Object.keys(q.criteria) : q.choices.map(c => c.value);
+    const goal = state.task;
     const words = goal.replace(/unsure/, '').trim();
-    const hit = options.find(([, d]) => d.includes(`"${words}"`));
-    const choice = hit ? hit[0] : 'none';
+    const hit = state.elements.find(e => e.includes(`"${words}"`));
+    const choice = hit ? hit.split(':')[0] : 'none';
+    assert.ok(options.includes(choice));
     const confidence = goal.includes('unsure') ? 0.4 : 0.95;
-    const probabilities = options.map(([v]) => [v, v === choice ? confidence : (1 - confidence) / (options.length - 1)]);
+    const probabilities = options.map(v => [v, v === choice ? confidence : (1 - confidence) / (options.length - 1)]);
     const answer = jev
       ? { model: 'jev-test', answers: { target: { type: 'choice', choice, confidence, probabilities: Object.fromEntries(probabilities) } } }
       : { model: 'gpt-6-luna', answers: [{ type: 'choice', name: 'target', choice, confidence, probabilities: probabilities.map(([value, probability]) => ({ value, probability })) }] };
@@ -89,6 +91,7 @@ try {
   assert.deepEqual([r.out.model, r.out.clicked], ['gpt-6-luna', true]);
   assert.equal(await inPage('window.clicked'), 'later');
   assert.equal(seen.at(-1).data.questions[0].choices.at(-1).value, 'none');
+  assert.equal(JSON.parse(seen.at(-1).data.input).task, 'Remind me later');
   checks.push('OpenAI Decisions on gpt-6-luna: same question shape, the element is clicked');
 
   await inPage('window.clicked = null');
@@ -122,6 +125,14 @@ try {
   r = await pick(['Sign in', '--tab', 'F'.repeat(32)], jev);
   assert.equal(r.code, 4);
   checks.push('No key: it stops before reading the page. An unknown tab: exit 4');
+
+  const before = seen.length;
+  r = await pick(['Sign in', '--tab', targetId, '--dry-run']);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(seen.length, before);
+  assert.equal(r.out.body.state.task, 'Sign in');
+  for (const value of TYPED) assert.equal(JSON.stringify(r.out).includes(value), false);
+  checks.push('--dry-run prints what would be sent, needs no key, and sends nothing');
 
   console.log(JSON.stringify({ checks }, null, 1));
 } finally {
