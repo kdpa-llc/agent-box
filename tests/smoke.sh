@@ -92,6 +92,13 @@ pw click "$pass" >/dev/null
 "$BOX" type-secret "Smoke test"
 got=$(result "() => (window.sent || 0) + ' ' + document.querySelector('[type=password]').value.length")
 [ "$got" = '"1 0"' ] || fail "expected one submit and an empty password field, got $got"
+
+step "a password field the page turned into plain text is emptied and hidden too"
+result "() => { const f = document.querySelector('[type=password]'); f.value = ''; f.form.onsubmit = () => { f.type = 'text'; return false; }; return 'reset' }" >/dev/null
+pw click "$pass" >/dev/null
+"$BOX" type-secret "Smoke test"
+got=$(result "() => { const f = document.querySelector('form input:not([placeholder=user])'); return f.type + ' ' + f.value.length }")
+[ "$got" = '"password 0"' ] || fail "expected an empty password field after the page showed it as text, got $got"
 "$BOX" secret rm "Smoke test" >/dev/null; "$BOX" secret rm "Other site" >/dev/null
 
 step "a download lands where agent-box files and get find it"
