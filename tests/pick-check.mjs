@@ -20,7 +20,7 @@ const server = createServer((req, res) => {
   req.on('end', () => {
     const data = JSON.parse(body);
     seen.push({ path: req.url, auth: req.headers.authorization, data });
-    const jev = req.url.endsWith('/systemone');
+    const jev = !Array.isArray(data.questions); // Jev's shape, also on OpenRouter
     const q = jev ? data.questions.target : data.questions[0];
     const options = jev ? Object.entries(q.criteria) : q.choices.map(c => [c.value, c.description]);
     const goal = q.instructions.split('\n')[0].replace(/^.*do this: /, '');
@@ -64,7 +64,7 @@ try {
   await new Promise(r => setTimeout(r, 500));
 
   const pick = (args, env = {}) => new Promise(resolve => execFile(process.execPath, [PICK, ...args],
-    { env: { ...process.env, BOX_PICK_CDP: CDP, BOX_PICK_JEV_URL: `${api}/v1/systemone`, BOX_PICK_OPENAI_URL: `${api}/v1/decisions`,
+    { env: { ...process.env, BOX_PICK_CDP: CDP, BOX_PICK_JEV_URL: `${api}/v1/systemone`, BOX_PICK_OPENAI_URL: `${api}/v1/decisions`, BOX_PICK_OPENROUTER_URL: `${api}/api/alpha/decisions`, OPENROUTER_API_KEY: '',
       TYPESAFE_API_KEY: '', OPENAI_API_KEY: '', XDG_CONFIG_HOME: '/nonexistent', ...env } },
     (error, stdout, stderr) => resolve({ code: error ? error.code : 0, out: stdout ? JSON.parse(stdout) : null, err: stderr })));
   const jev = { TYPESAFE_API_KEY: 'test-jev-key' }, openai = { OPENAI_API_KEY: 'test-openai-key' };
@@ -90,6 +90,16 @@ try {
   assert.equal(await inPage('window.clicked'), 'later');
   assert.equal(seen.at(-1).data.questions[0].choices.at(-1).value, 'none');
   checks.push('OpenAI Decisions on gpt-6-luna: same question shape, the element is clicked');
+
+  await inPage('window.clicked = null');
+  const openrouter = { OPENROUTER_API_KEY: 'test-openrouter-key' };
+  r = await pick(['Sign in', '--tab', targetId, '--click'], openrouter);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.out.provider, seen.at(-1).path, seen.at(-1).auth, seen.at(-1).data.model], ['openrouter', '/api/alpha/decisions', 'Bearer test-openrouter-key', '~typesafe/jev-latest']);
+  assert.equal(await inPage('window.clicked'), 'signin');
+  r = await pick(['Sign in', '--tab', targetId, '--model', 'openai/gpt-6-luna-decisions'], openrouter);
+  assert.deepEqual([r.code, seen.at(-1).data.model, typeof seen.at(-1).data.questions.target], [0, 'openai/gpt-6-luna-decisions', 'object']);
+  checks.push('OpenRouter: Jev by default, on its decisions endpoint with the OpenRouter key; --model picks another decision model there');
 
   await inPage('window.clicked = null');
   r = await pick(['Sign in unsure', '--tab', targetId, '--click'], jev);

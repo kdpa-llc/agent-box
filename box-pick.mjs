@@ -4,8 +4,8 @@
 // over its DevTools protocol (CDP).
 //
 //   box-pick "<what to do>" (--page <text> | --tab <id>) [--click] [--min <0-1>]
-//            [--provider jev|openai] [--cdp <url>]
-//   box-pick key <jev|openai> --from-file <path>
+//            [--provider openrouter|jev|openai] [--model <id>] [--cdp <url>]
+//   box-pick key <openrouter|jev|openai> --from-file <path>
 //
 // The page's visible buttons, links and fields go to the model as a numbered list:
 // their kind, their label, and the heading or form they sit in. Never what is typed
@@ -13,9 +13,12 @@
 // answers with one number from that list, or "none", and a confidence. It never
 // writes selectors or code. Page text is data, never instructions.
 //
-// Providers: Jev from TypeSafe (POST /v1/systemone, about $0.04 per million input
-// tokens) and OpenAI's Decisions API on gpt-6-luna (POST /v1/decisions, $0.10 per
-// million input tokens). Both charge per call; a key is needed for either.
+// Providers, all paid per call, for input tokens only:
+// - openrouter: OpenRouter's decisions endpoint (POST /api/alpha/decisions), billed to
+//   the OpenRouter account. Jev by default (~typesafe/jev-latest); --model
+//   openai/gpt-6-luna-decisions runs OpenAI's model there instead. Jev's request shape.
+// - jev: TypeSafe's own API (POST /v1/systemone), about $0.04 per million tokens.
+// - openai: OpenAI's Decisions API on gpt-6-luna (POST /v1/decisions), $0.10 per million.
 //
 // Exit codes: 0 picked (and clicked with --click); 2 usage; 3 not sure, nothing
 // clicked; 4 the page or tab was not found, or two pages match; 1 anything else.
@@ -25,8 +28,9 @@ import { join } from 'node:path';
 
 const KEYS_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'agent-box', 'keys');
 const PROVIDERS = {
-  jev: { env: 'TYPESAFE_API_KEY', url: process.env.BOX_PICK_JEV_URL || 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest' },
-  openai: { env: 'OPENAI_API_KEY', url: process.env.BOX_PICK_OPENAI_URL || 'https://api.openai.com/v1/decisions', model: 'gpt-6-luna' },
+  openrouter: { env: 'OPENROUTER_API_KEY', url: process.env.BOX_PICK_OPENROUTER_URL || 'https://openrouter.ai/api/alpha/decisions', model: '~typesafe/jev-latest', shape: 'jev' },
+  jev: { env: 'TYPESAFE_API_KEY', url: process.env.BOX_PICK_JEV_URL || 'https://api.typesafe.ai/v1/systemone', model: 'jev-latest', shape: 'jev' },
+  openai: { env: 'OPENAI_API_KEY', url: process.env.BOX_PICK_OPENAI_URL || 'https://api.openai.com/v1/decisions', model: 'gpt-6-luna', shape: 'openai' },
 };
 const MOST = 200; // elements offered to the model; Jev and OpenAI both take up to 255 options
 
@@ -139,11 +143,13 @@ function question(goal, snap) {
   return { instructions, options, page: { title: snap.title, address: snap.where, headings: snap.headings } };
 }
 
-async function ask(provider, key, q) {
+async function ask(provider, key, q, model) {
   const p = PROVIDERS[provider];
-  const body = provider === 'jev'
-    ? { model: p.model, state: { page: q.page }, questions: { target: { type: 'choice', instructions: q.instructions, criteria: Object.fromEntries(q.options) } } }
-    : { model: p.model, input: `Web page: ${JSON.stringify(q.page)}`, questions: [{ type: 'choice', name: 'target', instructions: q.instructions,
+  model ||= p.model;
+  const jevShape = p.shape === 'jev';
+  const body = jevShape
+    ? { model, state: { page: q.page }, questions: { target: { type: 'choice', instructions: q.instructions, criteria: Object.fromEntries(q.options) } } }
+    : { model, input: `Web page: ${JSON.stringify(q.page)}`, questions: [{ type: 'choice', name: 'target', instructions: q.instructions,
         choices: q.options.map(([value, description]) => ({ value, description })) }] };
   const started = Date.now();
   let response;
@@ -156,17 +162,17 @@ async function ask(provider, key, q) {
   }
   if (!response.ok) stop(1, `${provider} answered ${response.status}${response.status === 401 ? ': the key was refused' : ''}`);
   const data = await response.json();
-  const answer = provider === 'jev' ? data.answers?.target : data.answers?.find(a => a.name === 'target');
+  const answer = jevShape ? data.answers?.target : data.answers?.find(a => a.name === 'target');
   if (!answer?.choice) stop(1, `${provider} gave no answer`);
-  const probabilities = provider === 'jev' ? Object.entries(answer.probabilities ?? {})
+  const probabilities = jevShape ? Object.entries(answer.probabilities ?? {})
     : (answer.probabilities ?? []).map(p => [p.value, p.probability]);
-  return { choice: String(answer.choice), confidence: Number(answer.confidence ?? 0), probabilities, model: data.model ?? p.model, ms: Date.now() - started };
+  return { choice: String(answer.choice), confidence: Number(answer.confidence ?? 0), probabilities, model: data.model ?? model, ms: Date.now() - started };
 }
 
 // --- the command --------------------------------------------------------------
 
 function parse(argv) {
-  const o = { goal: null, page: null, tab: null, click: false, min: 0.8, provider: process.env.BOX_PICK_PROVIDER || null, cdp: process.env.BOX_PICK_CDP || 'http://127.0.0.1:9222' };
+  const o = { goal: null, page: null, tab: null, click: false, min: 0.8, provider: process.env.BOX_PICK_PROVIDER || null, cdp: process.env.BOX_PICK_CDP || 'http://127.0.0.1:9222', model: process.env.BOX_PICK_MODEL || null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i], value = () => argv[++i] ?? stop(2, `${a} needs a value`);
     if (a === '--page') o.page = value();
@@ -174,6 +180,7 @@ function parse(argv) {
     else if (a === '--click') o.click = true;
     else if (a === '--min') o.min = Number(value());
     else if (a === '--provider') o.provider = value();
+    else if (a === '--model') o.model = value();
     else if (a === '--cdp') o.cdp = value();
     else if (a.startsWith('-')) stop(2, `unknown option ${a}`);
     else if (o.goal === null) o.goal = a;
@@ -182,8 +189,8 @@ function parse(argv) {
   return o;
 }
 
-const USAGE = `usage: agent-box pick "<what to do>" (--page <part of the address or title> | --tab <id>) [--click] [--min 0.8] [--provider jev|openai]
-       agent-box pick key <jev|openai> --from-file <path>`;
+const USAGE = `usage: agent-box pick "<what to do>" (--page <part of the address or title> | --tab <id>) [--click] [--min 0.8] [--provider openrouter|jev|openai] [--model <id>]
+       agent-box pick key <openrouter|jev|openai> --from-file <path>`;
 
 const [first, ...rest] = process.argv.slice(2);
 if (!first || first === '--help' || first === '-h') { console.log(USAGE); process.exit(first ? 0 : 2); }
@@ -204,9 +211,9 @@ const o = parse([first, ...rest]);
 if (!o.goal?.trim() || (!o.page && !o.tab) || (o.page && o.tab)) stop(2, USAGE);
 if (!(o.min >= 0 && o.min <= 1)) stop(2, '--min is a number from 0 to 1');
 if (typeof WebSocket !== 'function') stop(1, 'needs Node 22 or newer');
-const provider = o.provider ?? (keyFor('jev') ? 'jev' : keyFor('openai') ? 'openai' : null);
-if (!provider) stop(1, `no key. Save one first: agent-box pick key jev --from-file <path> (TypeSafe), or set ${PROVIDERS.jev.env} or ${PROVIDERS.openai.env}`);
-if (!PROVIDERS[provider]) stop(2, '--provider is jev or openai');
+const provider = o.provider ?? Object.keys(PROVIDERS).find(name => keyFor(name)) ?? null;
+if (!provider) stop(1, `no key. Save one first: agent-box pick key openrouter --from-file <path> (or jev, openai), or set ${Object.values(PROVIDERS).map(p => p.env).join(', ')}`);
+if (!PROVIDERS[provider]) stop(2, '--provider is openrouter, jev or openai');
 const key = keyFor(provider);
 if (!key) stop(1, `no ${provider} key: agent-box pick key ${provider} --from-file <path>, or set ${PROVIDERS[provider].env}`);
 
@@ -217,7 +224,7 @@ try {
   const snap = await page.run(SNAPSHOT);
   if (!snap.elements.length) stop(3, 'the page shows nothing to click');
   const q = question(o.goal, snap);
-  const a = await ask(provider, key, q);
+  const a = await ask(provider, key, q, o.model);
   const n = a.choice === 'none' ? null : Number(a.choice.replace(/^e/, '')) - 1;
   if (n !== null && !(Number.isInteger(n) && n >= 0 && n < snap.elements.length)) stop(1, `${provider} answered with an element that was not offered`);
   const label = id => id === 'none' ? 'none' : line(snap.elements[Number(id.slice(1)) - 1] ?? {});

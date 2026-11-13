@@ -583,7 +583,7 @@ case "${1:-help}" in
     esac ;;
   pick)
     # agent-box pick "<what to do>" --page <text> [--click]: a fast decision model
-    # (Jev or OpenAI's gpt-6-luna) picks the element; see box-pick.mjs.
+    # (Jev through OpenRouter, TypeSafe or OpenAI's gpt-6-luna) picks the element; see box-pick.mjs.
     command -v node >/dev/null || { echo "agent-box: pick needs Node 22 or newer" >&2; exit 1; }
     shift
     BOX_PICK_CDP=$CDP exec node "$HERE/box-pick.mjs" "$@" ;;
@@ -682,9 +682,9 @@ agent-box hold <minutes>   keep the box awake that long even when idle (0 ends i
 agent-box tabs     open tabs, longest idle first, and free memory
 agent-box tidy [minutes]   close tabs idle that long (default 60); `tidy log` shows closures
 agent-box pick "<what to do>" --page <text> [--click]
-                   ask a fast decision model (Jev or gpt-6-luna) which element on that
+                   ask a fast decision model (Jev, via OpenRouter) which element on that
                    page does it; --click clicks it when the model is sure. Needs a key:
-                   agent-box pick key <jev|openai> --from-file <path>. Paid per call.
+                   agent-box pick key <openrouter|jev|openai> --from-file <path>. Paid per call.
 agent-box doctor   check the setup and say how to fix what's wrong
 agent-box runtime  the container tool in use (container, docker or podman)
 agent-box build    rebuild the image with current packages

@@ -48,7 +48,7 @@ playwright-cli -s=hn-top detach                         # leaves the browser run
 
 ## Fast element picks
 
-`agent-box pick` asks a small, fast decision model (Jev, or OpenAI's gpt-6-luna) which element on your page does something, and can click it. Use it when finding the element would take you a long look at a big page: a cookie banner's "Reject all", one button among many, an "Export" hidden in a toolbar. Keep deciding what to do yourself; it only points.
+`agent-box pick` asks a small, fast decision model (Jev by default, through OpenRouter) which element on your page does something, and can click it. Use it when finding the element would take you a long look at a big page: a cookie banner's "Reject all", one button among many, an "Export" hidden in a toolbar. Keep deciding what to do yourself; it only points.
 
 ```sh
 agent-box pick "Reject all cookies" --page example.com           # which element, with its confidence
