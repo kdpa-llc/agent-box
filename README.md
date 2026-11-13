@@ -205,6 +205,7 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 | `agent-box door on\|off`                                         | (macOS) Always-on helper so the viewer address starts the box           |
 | `agent-box secret list\|save\|rm\|open`                          | Manage the vault; `open` shows the password manager on the box's screen |
 | `agent-box type-secret <name> [--username\|--totp] [--no-enter] [--page <text>]` | Type a vault entry into the field an agent clicked, on the entry's site |
+| `agent-box pick "<what to do>" --page <text> [--click]` | Ask a fast decision model which element on that page does it, and click it when the model is sure. Optional and paid per call (see below) |
 | `agent-box setup [--runtime T] [--skills-dir D]... [--no-skills]` | Install tools, image and agent skill                                   |
 | `agent-box uninstall [--all]`                                    | Undo setup; `--all` also deletes the image, logins and passwords        |
 
@@ -222,6 +223,22 @@ Settings (environment variables for `agent-box up`):
 | `BOX_RUNTIME`                   | the tool chosen in setup          |
 | `BOX_REFRESH_DAYS`              | 14 (rebuild older images; 0 never) |
 | `BOX_PREPARE_WAIT`              | 100 s (how long `up` waits for a build) |
+
+## 🎯 Fast element picks (optional)
+
+`agent-box pick` asks a small, fast decision model which button, link or field on a page does something, in about a tenth of a second to a second, for a fraction of a cent. It suits steps an agent would otherwise spend a full model turn on: which of 80 buttons is "Export", where the cookie banner's "Reject all" is. The agent keeps deciding what to do; the model only points.
+
+```sh
+agent-box pick key jev --from-file <path>          # once: a TypeSafe key (or: key openai)
+agent-box pick "Accept only necessary cookies" --page example.com --click
+```
+
+- **Models:** [Jev][jev] from TypeSafe, or OpenAI's [Decisions API][openai-decisions] on `gpt-6-luna`. Both charge per call, for input only: about $0.04 (Jev) or $0.10 (OpenAI) per million tokens. A page of 100 elements is a few thousand tokens. Keys go in `~/.config/agent-box/keys/` (mode 600), or in `TYPESAFE_API_KEY` / `OPENAI_API_KEY`.
+- **What it sends:** the page's title, address without its query, headings, and a numbered list of the visible buttons, links and fields: their kind, label and the heading or form they sit in. Never what is typed in a field. Emails and long runs of digits in labels are replaced first.
+- **What comes back:** one number from that list, or "none", with a confidence. It never writes selectors or code. With `--click` it clicks that element only if the confidence reaches `--min` (0.8) and nothing covers it, and it prints the next likely elements either way. Exit code 3 means it wasn't sure and clicked nothing.
+- It uses the page's own tab over browser control, so it never takes the screen from another agent. It never types; passwords stay with `type-secret`.
+
+`node tests/pick-check.mjs` checks it against a running box with a stand-in for both APIs, so it costs nothing.
 
 ## 📊 What it costs
 
@@ -241,6 +258,8 @@ Measured on an Apple silicon Mac.
 - The image is rebuilt with current Debian packages when it's over 14 days old, so Chromium gets security updates.
 - Chromium keeps its sandbox. Under Docker and Podman the box uses [Docker's default seccomp profile][moby-seccomp] plus the three calls the sandbox needs, instead of `--no-sandbox`.
 - With Apple's `container`, each box is its own VM. With Docker or Podman on Linux, it's a container sharing the host's kernel.
+
+- `pick` is off until you save a key. When on, it sends the page outline described under "Fast element picks" to TypeSafe or OpenAI.
 
 See [SECURITY.md][security] to report a vulnerability.
 
@@ -372,6 +391,8 @@ Made with ❤️ by KDPA
 [semantic-release]: https://github.com/semantic-release/semantic-release
 [conventional-commits]: https://www.conventionalcommits.org/
 [moby-seccomp]: https://github.com/moby/profiles/blob/main/seccomp/default.json
+[jev]: https://docs.typesafe.ai/introduction
+[openai-decisions]: https://developers.openai.com/api/docs/guides/decisions
 [mcp-compression-proxy]: https://github.com/kdpa-llc/mcp-compression-proxy
 [local-skills-mcp]: https://github.com/kdpa-llc/local-skills-mcp
 [peers]: https://github.com/kdpa-llc/peers

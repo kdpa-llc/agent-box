@@ -16,6 +16,7 @@
     "box-vault",
     "box-type",
     "box-tidy",
+    "box-pick.mjs",
     "box-door.py",
     "chromium-seccomp.json",
     "agent-box-door.plist",
