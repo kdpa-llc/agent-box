@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [1.4.0](https://github.com/kdpa-llc/agent-box/compare/v1.3.0...v1.4.0) (2026-11-14)
+
+### Features
+
+* agent-box pick, a fast decision model that finds the element to click ([0770dcb](https://github.com/kdpa-llc/agent-box/commit/0770dcb6c11d11526c31c0199f9b9b0590932667))
+* **pick:** use Jev through OpenRouter's decisions endpoint ([c90cd09](https://github.com/kdpa-llc/agent-box/commit/c90cd091bddb582dcfb7ad73e721f7172e5f236d))
+
+### Bug Fixes
+
+* empty a password field the page turned into plain text ([c656dc0](https://github.com/kdpa-llc/agent-box/commit/c656dc0ec49eed45ca9baac494843e3887194364))
+* **pick:** ask in the form Jev answers best, with outlines that say where each element is ([cc36fa0](https://github.com/kdpa-llc/agent-box/commit/cc36fa064148eebf9003f9c9334df297bcdbfca0))
+
 ## [1.3.0](https://github.com/kdpa-llc/agent-box/compare/v1.2.0...v1.3.0) (2026-11-12)
 
 ### Features
