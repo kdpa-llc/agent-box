@@ -46,6 +46,22 @@ playwright-cli -s=hn-top detach                         # leaves the browser run
 - For the whole desktop rather than the page: `agent-box shot` (screenshot) and `agent-box x <xdotool args>` (mouse and keyboard).
 - If a command fails because the box stopped, run `agent-box up` and attach again. If you'll be away from the browser for a while, for example waiting for an emailed code or for the user, keep it awake with `agent-box hold <minutes>`, and end the hold with `agent-box hold 0` when you're done.
 
+## Fast element picks
+
+`agent-box pick` asks a small, fast decision model (Jev by default, through OpenRouter) which element on your page does something, and can click it. Use it when finding the element would take you a long look at a big page: a cookie banner's "Reject all", one button among many, an "Export" hidden in a toolbar. Keep deciding what to do yourself; it only points.
+
+```sh
+agent-box pick "Reject all cookies" --page example.com           # which element, with its confidence
+agent-box pick "Reject all cookies" --page example.com --click   # and click it, if the model is sure
+```
+
+- `--page` is part of your tab's address or title, and must match one page only (exit 4 otherwise). `--tab <id>` names it by the id in `curl -s http://127.0.0.1:9222/json`.
+- Exit 0: picked, and clicked with `--click`. Exit 3: not sure, nothing clicked; the output lists the next likely elements. Look at the page yourself then.
+- After a click, check the page did what you wanted. A page can word a button to mislead.
+- `--dry-run` shows what would be sent, and sends nothing.
+- It needs a key and costs a little per call. If it says "no key", don't set one up yourself: carry on without it, and tell the user it's available.
+- Never use it to type, and never for sign-in secrets: those go through `type-secret`.
+
 ## Files
 
 - **Downloads** go to the box's Downloads folder and survive restarts. `agent-box files` lists them, newest first; `agent-box get <name> [folder]` copies one to this machine, and `agent-box get --latest` copies the newest. Treat downloaded files as untrusted.
