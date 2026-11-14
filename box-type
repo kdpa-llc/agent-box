@@ -53,14 +53,39 @@ PROBE = r"""
 })()
 """
 
+# Marks the focused field before a password goes in, so the clean-up finds it
+# even if the page has turned it into a text field by then. A "show password"
+# eye does that: on 13 Nov 2026 a sign-in left a password in plain text on the
+# shared screen, and a clean-up that looked only for type=password missed it.
+MARK = r"""
+(() => {
+  let el = document.activeElement;
+  while (el && (el.tagName === 'IFRAME' || el.tagName === 'FRAME')) {
+    let inner = null;
+    try { inner = el.contentDocument; } catch (e) { inner = null; }
+    if (!inner) return false;
+    el = inner.activeElement;
+  }
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+  if (!el || el.tagName !== 'INPUT') return false;
+  el.setAttribute('data-agent-box-secret', '');
+  return true;
+})()
+"""
+
 # Empty every password field in the page, its same-origin frames and open
-# shadow roots: page snapshots include the text of password fields.
+# shadow roots: page snapshots include the text of password fields. A field
+# MARK marked is emptied whatever its type now, and made a password field again.
 CLEAR = r"""
 (() => {
   let n = 0;
   const walk = (root) => {
-    root.querySelectorAll('input[type=password]').forEach((i) => {
+    root.querySelectorAll('input[type=password], input[data-agent-box-secret]').forEach((i) => {
       if (i.value) { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); n++; }
+      if (i.hasAttribute('data-agent-box-secret')) {
+        if (i.type !== 'password') i.setAttribute('type', 'password');
+        i.removeAttribute('data-agent-box-secret');
+      }
     });
     root.querySelectorAll('*').forEach((e) => { if (e.shadowRoot) walk(e.shadowRoot); });
     root.querySelectorAll('iframe,frame').forEach((f) => {
@@ -240,6 +265,8 @@ def main():
         return 3
 
     page, info = fields[0]
+    if args.kind == "password":
+        page.evaluate(MARK)
     type_keys(page, value)
     after = json.loads(page.evaluate(PROBE) or "{}")
     if args.kind == "password" and after.get("type") == "password" and after.get("length") != len(value):
