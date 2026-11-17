@@ -20,7 +20,7 @@ Give Claude Code, Codex and other coding agents their own Linux desktop with a r
 [![GitHub Last Commit][commit-badge]][commits]
 [![PRs Welcome][prs-badge]][contributing]
 
-[🚀 Quick start](#-quick-start) · [🧰 Container tools](#-choose-a-container-tool) · [🔐 Passwords](#-passwords) · [⌨️ Commands](#️-cli-reference) · [💖 Support](#-support-the-project)
+[🚀 Quick start](#-quick-start) · [🧰 Container tools](#-choose-a-container-tool) · [📲 Sign in from your phone](#-sign-in-from-your-phone) · [🔐 Passwords](#-passwords) · [⌨️ Commands](#️-cli-reference) · [💖 Support](#-support-the-project)
 
 <img src="https://raw.githubusercontent.com/kdpa-llc/agent-box/main/docs/desktop.png" alt="The agent box desktop: Chromium with a taskbar, as seen in the web viewer" width="720">
 
@@ -31,6 +31,7 @@ Coding agents are good at the web until a site wants a login, blocks headless br
 - 🖥️ **A real desktop**: Linux, Chromium and a taskbar, viewable in any browser.
 - 🤖 **Driven with Playwright**: agents use `playwright-cli` over Chromium's remote-control port instead of clicking on pixels, with desktop screenshots and mouse and keyboard control when they need them.
 - 📱 **Watch and take over from your phone** through the web viewer and Tailscale.
+- 📲 **Sign in from your phone**: an agent asks, your phone gets a notification, and you fill the login in a small app, where your password manager can fill it. The box types it once and never stores it, and the agent never sees it.
 - 🔐 **Passwords agents don't see**: a KeePassXC vault inside the box. Agents type entries into the right page, on the right site only, without the values reaching their output.
 - 📥 **Downloads and uploads**: files the browser downloads stay in the box until an agent copies them out, and agents upload files from your machine into pages.
 - 🍪 **Logins that persist** between runs.
@@ -122,7 +123,7 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 - Uploads work too: the agent clicks a file input and runs `playwright-cli upload <file on your machine>`.
 - `agent-box hold <minutes>` keeps the box awake while an agent waits, for example for you.
 - Playwright scripts can connect with `chromium.connectOverCDP('http://127.0.0.1:9222')`.
-- When a sign-in needs you, the skill has the agent send a link or code that you approve on your phone, where your passkeys are. The box has no passkeys of its own. The agent gives you the viewer address only for steps a link can't do, such as a CAPTCHA or a payment.
+- When a sign-in needs you, the skill has the agent send a link or code that you approve on your phone, where your passkeys are. The box has no passkeys of its own. With [the login broker](#-sign-in-from-your-phone) on, the agent asks your phone for a password, a code or a step with `agent-box login`. It gives you the viewer address only for steps a link can't do, such as a CAPTCHA or a payment.
 
 ## 📱 Watch and take over
 
@@ -135,6 +136,41 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 
   `agent-box url` prints the phone address. Turn the phone sideways for a bigger view; the keyboard button is in the side bar.
 - **Open the viewer when the box is off (macOS):** run `agent-box door on` once. It adds a 15 MB login service on port 6080 that starts the box when the address is opened, and shows a "Starting…" page meanwhile. The box's own viewer moves to port 6090. Without it, the address only works while the box runs. `agent-box door off` removes it.
+
+## 📲 Sign in from your phone
+
+When an agent reaches a sign-in page, it can ask your phone instead of asking you in chat. Your phone gets a notification. You fill the username and password in a small web app, where the iPhone keyboard offers them from your password manager, and tap Send. The box types them into the page. The login is used once and never stored, and the agent never sees it.
+
+### Set it up once
+
+1. Turn on the login broker, the small service that does this. On a Mac it's a login service; on Linux it runs until the machine restarts. It needs Node 20 or newer.
+
+   ```bash
+   agent-box broker on
+   ```
+
+2. Make its app reachable from your own devices with Tailscale, as for the viewer (on Linux the command is just `tailscale`):
+
+   ```bash
+   /Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8444 http://127.0.0.1:6070
+   ```
+
+3. On your iPhone, open the address `agent-box broker status` prints, `https://<your machine>.<your tailnet>.ts.net:8444/`, in Safari. Tap Share, then Add to Home Screen, and open Agent Box from the Home Screen. Notifications only work there.
+4. Run `agent-box broker pair` and type the 8-character code into the app. A code works once, for 10 minutes.
+5. In the app's settings, turn on notifications and send a test.
+
+### What a request looks like
+
+An agent runs `agent-box login github.com`. Your phone shows "Sign-in request: Claude wants to sign in to github.com". The app shows the site, and the title and address of the page the box has open, as the broker saw them, not as the agent said. Fill the username and password and tap Send, or tap Deny. To fill them from your password manager, tap a field, then the key above the keyboard, and search for the site: the keyboard suggests logins for the app's own address, not for the site the agent is on. The agent then clicks each field and has the broker type it. The broker holds the values in memory for 5 minutes at most, and drops them once the password is typed.
+
+An agent can also ask for a code that came by text or email (`--code`), or for a step only you can do in the viewer, such as a CAPTCHA (`--human`). That card has Open live view, Done and Can't. A request waits 30 minutes for you and keeps the box awake meanwhile.
+
+- `agent-box broker status` shows whether it runs, the phone address and the paired phones.
+- `agent-box broker unpair <id>` removes a phone, and `--all` removes every one.
+- `agent-box broker off` stops the service. While a phone is paired, an agent's `agent-box login` starts it again.
+- With no phone paired, `agent-box login` says so, and agents fall back to the other ways in the skill.
+
+The contract between the broker, the command and the app is in [docs/broker.md](docs/broker.md).
 
 ## 🔐 Passwords
 
@@ -179,7 +215,12 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 | `desktop/`                            | Taskbar and KeePassXC settings                                        |
 | `chromium-seccomp.json`               | Lets Chromium keep its sandbox under Docker and Podman; regenerate it with `npm run update:seccomp` |
 | `box-door.py`, `agent-box-door.plist` | The optional front door on macOS (`agent-box door on`)                |
+| `box-broker.mjs`, `box-broker-push.mjs` | The login broker and its client (`agent-box login`, `agent-box broker`), and its Web Push |
+| `agent-box-broker.plist`              | The broker's login service on macOS (`agent-box broker on`)          |
+| `app/`                                | The phone app the broker serves                                       |
+| `docs/broker.md`                      | The contract between the broker, the command and the phone app        |
 | `tests/smoke.sh`                      | End-to-end test on a real box                                         |
+| `tests/broker-check.mjs`              | Checks the broker with stand-ins for the box, the phone and the push service |
 
 ## ⌨️ CLI reference
 
@@ -205,6 +246,8 @@ playwright-cli -s=my-task detach              # leaves the browser running for o
 | `agent-box door on\|off`                                         | (macOS) Always-on helper so the viewer address starts the box           |
 | `agent-box secret list\|save\|rm\|open`                          | Manage the vault; `open` shows the password manager on the box's screen |
 | `agent-box type-secret <name> [--username\|--totp] [--no-enter] [--page <text>]` | Type a vault entry into the field an agent clicked, on the entry's site |
+| `agent-box login <site> [--username\|--password\|--code\|--human "<what to do>"\|--cancel]` | Ask the user's phone for a login, a code or a step, and type the answer into the field an agent clicked |
+| `agent-box broker on\|off\|status\|pair\|unpair\|test`         | The login broker: start or stop it, pair a phone, send a test notification |
 | `agent-box pick "<what to do>" --page <text> [--click]` | Ask a fast decision model which element on that page does it, and click it when the model is sure. Optional and paid per call (see below) |
 | `agent-box setup [--runtime T] [--skills-dir D]... [--no-skills]` | Install tools, image and agent skill                                   |
 | `agent-box uninstall [--all]`                                    | Undo setup; `--all` also deletes the image, logins and passwords        |
@@ -260,13 +303,18 @@ Measured on an Apple silicon Mac.
 - Chromium keeps its sandbox. Under Docker and Podman the box uses [Docker's default seccomp profile][moby-seccomp] plus the three calls the sandbox needs, instead of `--no-sandbox`.
 - With Apple's `container`, each box is its own VM. With Docker or Podman on Linux, it's a container sharing the host's kernel.
 
+- The login broker listens on 127.0.0.1 only, and Tailscale Serve publishes its app to your tailnet. A phone pairs with a code that only a program on the machine can make, and gets its own token.
+- Any program running as you can ask for a login through the broker, and can read a password field in the box in the moment after it's filled. The app shows the page the broker itself saw, so check the site before you send. The broker types only on that site, and empties the field about 3 seconds after a password.
+- Anyone holding a paired phone can answer requests. If you lose one, run `agent-box broker unpair --all`.
+- Logins sent from the phone stay in the broker's memory only, are used once, and never go to disk, logs, notifications or the agent.
+
 - `pick` is off until you save a key. When on, it sends the page outline described under "Fast element picks" to OpenRouter, TypeSafe or OpenAI.
 
 See [SECURITY.md][security] to report a vulnerability.
 
 ## 🩺 Troubleshooting
 
-Start with `agent-box doctor`: it checks the container tool, the image, ports, playwright-cli, the agent skill, the phone viewer and disk space, and prints how to fix each problem. Then:
+Start with `agent-box doctor`: it checks the container tool, the image, ports, playwright-cli, the agent skill, the phone viewer, the login broker and disk space, and prints how to fix each problem. Then:
 
 ```bash
 agent-box status
@@ -277,7 +325,9 @@ agent-box logs
 - **"browser doesn't answer":** `agent-box logs` shows why. On Docker or Podman, a loop of "chromium exited, restarting" means the seccomp profile wasn't applied.
 - **"docker isn't running":** start Docker Desktop or OrbStack, or `colima start`. With Colima chosen in setup, `agent-box up` starts it for you.
 - **The phone saves a file instead of showing the viewer:** the box is off. Run `agent-box up`, or `agent-box door on` on a Mac.
-- **A port is already in use:** set `BOX_CDP_PORT` and `BOX_VIEW_PORT`.
+- **A port is already in use:** set `BOX_CDP_PORT` and `BOX_VIEW_PORT`, or `BOX_BROKER_PORT` for the login broker.
+- **`agent-box login` exits 8:** no phone is paired, or the broker can't start. `agent-box broker status` says which; its log is `~/Library/Logs/agent-box-broker.log` on a Mac.
+- **No notification arrives:** open the app from the Home Screen, not a Safari tab, turn notifications on in its settings, and run `agent-box broker test`.
 - **A tab disappeared:** `agent-box tidy log` lists the tabs the box closed, when and why. To keep idle tabs longer, raise `BOX_TAB_STALE_MINUTES`. If tabs are closed for lack of memory, give the box more with `BOX_MEMORY`.
 - **A tab shows "Aw, Snap":** the box ran out of memory and stopped that tab to stay alive. Close tabs you don't need (`agent-box tabs`), or raise `BOX_MEMORY`.
 - **The build fails for lack of space:** Apple's `container` needs about 5 GB free while it builds.
@@ -290,13 +340,13 @@ agent-box logs
 **Remove:**
 
 ```bash
-agent-box uninstall          # skill links, front door, running box; keeps logins and passwords
-agent-box uninstall --all    # also deletes the image and the box's storage, with its logins and passwords
+agent-box uninstall          # skill links, front door, login broker, running box; keeps logins and passwords
+agent-box uninstall --all    # also deletes the image, the box's storage with its logins and passwords, and paired phones
 npm rm -g kdpa-agent-box
 brew uninstall container     # if you used it and nothing else does
 ```
 
-Turn off the phone viewer with `tailscale serve --https=8443 off`.
+Turn off the phone viewer with `tailscale serve --https=8443 off`, and the broker's app with `tailscale serve --https=8444 off`.
 
 ## 🤝 Contributing
 
@@ -305,6 +355,7 @@ Found a bug 🐛, have an idea ✨, or want to improve the docs? Contributions a
 ```bash
 npm install      # dev tools and the commit-message hook
 npm run lint     # shellcheck
+npm run test:broker   # the login broker, with stand-ins; no box needed
 npm test         # end-to-end smoke test on a real box
 ```
 

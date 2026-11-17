@@ -75,11 +75,46 @@ Work down this list:
 
 1. **Skip the website.** If the tool has a command line with a web or device login, use that instead of the box. The command prints a link or code. The user opens it on their phone and approves with their passkey, and the waiting command gets the session. Examples are `gh auth login --web`, whose code is entered at github.com/login/device and lasts 15 minutes, and `npm login --auth-type=web`. `npm publish` and `npm trust` (trusted publishing) then ask for another approval link in the same way. Run the command in a pseudo-terminal (`script -q /dev/null <command>` on macOS, `script -q -c '<command>' /dev/null` on Linux) and keep it running until the approval lands. Without a pseudo-terminal, npm hides the link and exits. Much of what a website's settings do can also be done with its CLI or API, such as `gh secret set` or `gh api`.
 2. **Use a sign-in the box already has.** If the box is signed in to GitHub or Google, pick "Continue with GitHub" or "Sign in with Google".
-3. **Let the site ask the phone.** Past a passkey prompt, pick "Try another way" or "Use another method". Then choose an option that sends a prompt to the phone, such as GitHub Mobile, Google's "Tap Yes" or an authenticator app, or a code by email or text that the user reads and sends you. If the site needs a password first, type a saved one with `type-secret`.
+3. **Let the site ask the phone.** Past a passkey prompt, pick "Try another way" or "Use another method". Then choose an option that sends a prompt to the phone, such as GitHub Mobile, Google's "Tap Yes" or an authenticator app, or a code by email or text. Ask for the code with `agent-box login <site> --code`, or have the user read it and send it to you. If the site needs a password first, ask the user's phone for it with `agent-box login <site>`, or type a saved one with `type-secret`. See [Logins from the user's phone](#logins-from-the-users-phone).
 4. **A token made on the phone.** Name the exact page, the permissions and a short expiry. Collect the token through the private secret prompt (see Passwords), use it, and tell the user to revoke it when you're done.
-5. **The viewer, last.** Hand over the viewer only for what a link can't do, such as a CAPTCHA, a payment, or a step the user wants to do themselves. Give the address from `agent-box url`, say what's on the screen and what to do there, and continue once they say they're done. Hold the box awake while you wait.
+5. **The viewer, last.** Hand over the viewer only for what a link can't do, such as a CAPTCHA, a payment, or a step the user wants to do themselves. Run `agent-box login <site> --human "<what to do>"`: the user's phone gets a notification with a button to the live view, and the command exits 0 when they tap Done. If it exits 8, give the address from `agent-box url` instead, say what's on the screen and what to do there, and continue once they say they're done. Hold the box awake while you wait.
 
 Send each link or code the moment it appears, and say when it expires. npm's links last about 5 minutes. If one expires unused, don't keep making new ones. Ask the user to reply when they can approve right away, and make a fresh one then. After two missed links, move to the next step in the list.
+
+## Logins from the user's phone
+
+`agent-box login` asks the user's phone for a password, a code or a step only they can do. The user fills it in a small app, where their password manager can fill it, and the box types it into the field you clicked. You never see the value. Use it whenever a sign-in needs something from the user, in place of asking in chat.
+
+```sh
+agent-box login github.com --as "Claude"        # ask for a username and password; waits
+agent-box login github.com --username           # click the username field first; types it
+agent-box login github.com --password           # click the password field first; types it, presses Enter
+agent-box login github.com --code               # ask for a code, wait, and type it into the focused field
+agent-box login github.com --human "Solve the CAPTCHA, then tap Done"
+agent-box login github.com --cancel             # you no longer need it
+```
+
+- Open the sign-in page in the box first. The phone shows the page the box has open, so the user can check it. `<site>` is the site's host, like `github.com`.
+- Click the field before each typing command, as with `type-secret`. On a two-step form, type the username, press Continue, then click the password field.
+- The values are held for 5 minutes and dropped once the password is typed. A code is held for 2 minutes, and dropped once typed.
+- A request waits for the user for 30 minutes and keeps the box awake meanwhile. One call waits up to 100 seconds (`--wait`, at most 300).
+- `--no-enter` types without pressing Enter. Then submit the form before any snapshot, because the password field isn't emptied for you.
+
+What the exit code tells you:
+
+| Code | What it means                           | What to do                                                                            |
+| ---- | --------------------------------------- | ------------------------------------------------------------------------------------- |
+| 0    | Done                                    | Run the next command it prints                                                        |
+| 2    | Wrong usage                             | Fix the command                                                                       |
+| 3    | No focused field of the right kind      | Click the field, then run it again; the value is still held                           |
+| 4    | More than one page has that field focused | Add `--page <part of the address>`                                                  |
+| 5    | No page on that site, or the box is off | Run `agent-box up`, open the sign-in page, then run it again                          |
+| 6    | The user denied it                      | Stop, and ask the user in chat what they want                                         |
+| 7    | It expired, was cancelled, or was used  | Ask again only if the user still wants it                                             |
+| 8    | No phone is paired, or no broker        | Use the other ways in [Sign-ins that need the user](#sign-ins-that-need-the-user)     |
+| 75   | Still waiting for the user              | Run the same command again; it picks up the same request                              |
+
+Don't run `agent-box broker` commands to set it up or pair a phone yourself: those are the user's. If `login` exits 8, carry on with the other ways, and tell the user once that they can set it up with `agent-box broker on`.
 
 ## Passwords
 
@@ -101,7 +136,7 @@ The box has its own password manager, KeePassXC, with one encrypted vault inside
 
 ## Rules
 
-- The box is shared. Don't run `agent-box down`, `off`, `build` or `uninstall` unless the user asks; the box stops by itself after 20 minutes idle.
+- The box is shared. Don't run `agent-box down`, `off`, `build`, `uninstall` or `broker` unless the user asks; the box stops by itself after 20 minutes idle.
 - Close only the tabs you opened, close them as soon as you are done, and end any hold you set.
 - The vault is for test or low-risk accounts the user chose to store. Don't open its files or read entries in other ways than `type-secret`.
 - If something about the box itself fails, `agent-box doctor` says what and how to fix it.
