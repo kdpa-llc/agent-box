@@ -43,7 +43,7 @@ export function makeStub() {
       const url = new URL(req.url, 'http://' + req.headers.host); let body = {};
       if (req.method === 'POST') {
         if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return error(403, 'forbidden');
-        if (req.headers['content-type'] !== 'application/json') return error(422, 'invalid');
+        if (req.headers['content-type'] !== 'application/json') return error(403, 'forbidden');
         let raw = ''; for await (const bytes of req) { raw += bytes; if (Buffer.byteLength(raw) > 16384) return error(422, 'invalid'); }
         try { body = JSON.parse(raw); } catch { return error(422, 'invalid'); }
       }
@@ -56,6 +56,7 @@ export function makeStub() {
         else if (command === 'expire') { const r = requests.find(r => r.id === body.id); if (r) finish(r, 'expired'); }
         else if (command === 'fault') faults.set(body.id, body.status);
         else if (command === '401') { unauthorized = true; change(); }
+        else if (command === 'forget-seen') seen.length = 0;
         else if (command === 'seen') return send(200, seen);
         else return error(404, 'not_found');
         return send(200, { ok: true });
@@ -69,7 +70,7 @@ export function makeStub() {
       if (url.pathname.startsWith('/api/')) {
         if (!paired || unauthorized || req.headers.authorization !== 'Bearer ' + token) return error(401, 'unauthorized');
         if (url.pathname === '/api/state' && req.method === 'GET') {
-          if (Number(url.searchParams.get('since')) >= rev) await new Promise(resolve => {
+          if (Number(url.searchParams.get('since')) === rev) await new Promise(resolve => {   // ahead of rev: at once, like the broker
             let timer; const wake = () => { clearTimeout(timer); waiters.delete(wake); resolve(); };
             waiters.add(wake); timer = setTimeout(wake, Math.min(25, Number(url.searchParams.get('wait')) || 0) * 1000);
             res.on('close', wake);

@@ -78,6 +78,7 @@ try {
   const has = value => until(async () => (await text()).includes(value), value);
   const click = selector => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
   const fill = (selector, value) => evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});n.value=${JSON.stringify(value)};n.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  const typeInto = async (selector, value) => { await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`); await cdp('Input.insertText', { text: value }); };
   const control = async (name, body = {}) => (await fetch(origin + '/_test/' + name, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
   const dimensions = async (width = 390, scheme = 'light') => {
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 3, mobile: true });
@@ -98,14 +99,16 @@ try {
     await until(() => evaluate('!document.querySelector("button[type=submit]").disabled'), 'pair button');
     await click('button[type=submit]'); await pause(90);
   }
-  await has('Too many tries'); await control('pair-reset'); await fill('#pair-code', 'abcd2345');
+  await has('Too many tries'); await control('pair-reset'); await fill('#pair-code', '');
+  await typeInto('#pair-code', 'abcd 2345'); assert.equal(await evaluate('document.querySelector("#pair-code").value'), 'ABCD2345');
+  assert.ok(await evaluate('document.querySelector("nav").hidden'), 'no menu before pairing');
   await click('button[type=submit]'); await has('github.com');
   assert.ok(await evaluate('localStorage.getItem("agentbox.token")'));
-  checks.push('Pairing: wrong code, too many tries, valid code and stored token');
+  checks.push('Pairing: wrong code, too many tries, the code typed as printed (with its space), stored token');
   const ids = await evaluate('[...document.querySelectorAll("article")].map(n=>n.id)'); assert.equal(ids.length, 3);
   const [credentials, code, handoff] = ids;
   assert.deepEqual(await evaluate(`(()=>{const f=document.querySelector('#${credentials} form');return [...f.querySelectorAll('input')].map(n=>[n.autocomplete,n.getAttribute('autocapitalize'),n.getAttribute('autocorrect'),n.spellcheck,n.getAttribute('enterkeyhint')]);})()`),
-    [['username', 'none', 'off', false, 'send'], ['current-password', null, null, false, 'send']]);
+    [['username', 'none', 'off', false, 'next'], ['current-password', null, null, false, 'send']]);
   assert.deepEqual(await evaluate(`(()=>{const n=document.querySelector('#${code}-code');return [n.autocomplete,n.inputMode];})()`), ['one-time-code', 'numeric']);
   await click(`#${code} .reveal`); assert.equal(await evaluate(`document.querySelector('#${code}-code').inputMode`), 'text');
   assert.equal(await evaluate(`document.querySelector('#${handoff} .live').target`), '_blank');
@@ -115,6 +118,16 @@ try {
   checks.push('All card kinds, form attributes, letters option, live link and expiry countdown');
   const values = ['phone-test-user-938', 'phone-test-password-752', 'phone-test-code-643'];
   await fill(`#${credentials}-username`, values[0]); await fill(`#${credentials}-password`, values[1]);
+  const typed = () => evaluate(`[document.querySelector('#${credentials}-username')?.value, document.querySelector('#${credentials}-password')?.value]`);
+  const extra = (await control('add', { kind: 'code' })).request;
+  await until(() => evaluate(`!!document.getElementById('${extra.id}')`), 'a card arriving while another is being filled');
+  assert.deepEqual(await typed(), values.slice(0, 2));
+  await evaluate(`location.hash='#/settings'`); await has('Unpair this phone');
+  await evaluate(`location.hash='#/'`); await has('Recent');
+  assert.deepEqual(await typed(), values.slice(0, 2));
+  await click(`#${extra.id} .deny`); await until(async () => !(await evaluate(`!!document.getElementById('${extra.id}')`)), 'the extra card leaves');
+  assert.deepEqual(await typed(), values.slice(0, 2)); await control('forget-seen');
+  checks.push('What is typed in a card survives a live update and a look at Settings');
   await click(`#${credentials} .reveal`); assert.equal(await evaluate(`document.querySelector('#${credentials}-password').type`), 'text');
   await click(`#${credentials} .primary`);
   await until(async () => evaluate(`!document.querySelector('#${credentials}-password') || document.querySelector('#${credentials}-password').value === ''`), 'fields cleared');
@@ -155,11 +168,22 @@ try {
   checks.push('409 and 404 explain what happened; network failure keeps the form for retry');
   const focus = (await control('add', { kind: 'handoff' })).request;
   await until(() => evaluate(`!!document.getElementById('${focus.id}')`), 'focus card');
+  const other = (await control('add', { kind: 'code' })).request;
+  await until(() => evaluate(`!!document.getElementById('${other.id}')`), 'second card');
   await evaluate(`location.hash='#/r/${focus.id}'`);
   await until(() => evaluate(`document.activeElement.id === '${focus.id}'`), 'notification hash focuses card');
-  await cdp('Page.reload'); await has(focus.site);
+  assert.equal(await evaluate('location.hash'), '#/');
+  // The focus is taken once: typing in another card afterwards survives a live update.
+  await evaluate(`document.querySelector('#${other.id}-code').focus()`);
+  const third = (await control('add', { kind: 'handoff' })).request;
+  await until(() => evaluate(`!!document.getElementById('${third.id}')`), 'third card');
+  assert.equal(await evaluate('document.activeElement.id'), other.id + '-code');
+  await cdp('Page.navigate', { url: 'about:blank' }); await cdp('Page.navigate', { url: `${origin}/#/r/${focus.id}` }); await has(focus.site);
   await until(() => evaluate(`document.activeElement.id === '${focus.id}'`), 'cold notification link');
-  checks.push('Notification links focus their card in an open app and after reload');
+  // What the service worker sends when a notification is tapped with the app open.
+  await evaluate(`navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { hash: '#/r/${other.id}' } }))`);
+  await until(() => evaluate(`document.activeElement.id === '${other.id}'`), 'the service worker message focuses its card');
+  checks.push('A notification link focuses its card once, in an open app, on a cold start and from the service worker');
   for (const width of [320, 390]) for (const scheme of ['light', 'dark']) {
     await dimensions(width, scheme);
     for (const route of ['#/', '#/settings']) {
@@ -210,7 +234,7 @@ process.stdin.on('end', () => {
       await until(async () => { try { return (await agent('GET', '/agent/status')).status === 200; } catch { return false; } }, 'the broker to start');
       const { code } = (await agent('POST', '/agent/pair')).data;
       await dimensions(); await cdp('Page.navigate', { url: `http://127.0.0.1:${port}/` }); await has('Pair your phone');
-      await fill('#pair-code', code); await click('button[type=submit]'); await has('Nothing waiting');
+      await typeInto('#pair-code', `${code.slice(0, 4)} ${code.slice(4)}`); await click('button[type=submit]'); await has('Nothing waiting');
       const made = await agent('POST', '/agent/requests', { kind: 'credentials', site: 'example.com', agent: 'app-check' });
       assert.equal(made.status, 201);
       const { id } = made.data.request;
@@ -231,23 +255,28 @@ process.stdin.on('end', () => {
       checks.push('With the real broker: the app pairs, shows the page the broker saw, and its answer is typed once');
     } finally { await rm(dir, { recursive: true, force: true }); }
   }
-  const listeners = {}; const shown = []; const navigation = [];
-  const worker = { location: { origin }, registration: { showNotification: async (...args) => shown.push(args) },
+  const listeners = {}; const shown = []; const navigation = []; let skipped = false, claimed = false;
+  const worker = { location: { origin }, skipWaiting: () => { skipped = true; }, registration: { showNotification: async (...args) => shown.push(args) },
     addEventListener: (name, listener) => { listeners[name] = listener; },
-    clients: { matchAll: async () => [{ url: origin, navigate: async url => navigation.push(url), focus: async () => navigation.push('focused') }],
+    clients: { claim: async () => { claimed = true; },
+      matchAll: async () => [{ url: origin, focus: async () => navigation.push('focused'), postMessage: message => navigation.push(message) }],
       openWindow: async url => navigation.push(url) } };
   runInNewContext(await readFile(join(root, 'app/sw.js'), 'utf8'), { self: worker, URL });
-  const notification = { title: 'Code needed', body: 'example.com is asking for a code', tag: 'r_test0001', navigate: origin + '/#/r/r_test0001' };
   let task;
+  listeners.install(); listeners.activate({ waitUntil: promise => { task = promise; } }); await task;
+  assert.ok(skipped && claimed, 'a new worker takes over at once');
+  const notification = { title: 'Code needed', body: 'example.com is asking for a code', tag: 'r_test0001', navigate: origin + '/#/r/r_test0001' };
   listeners.push({ data: { json: () => ({ web_push: 8030, notification }) }, waitUntil: promise => { task = promise; } }); await task;
   assert.equal(shown[0][0], notification.title); assert.equal(shown[0][1].body, notification.body);
   assert.equal(shown[0][1].tag, notification.tag); assert.equal(shown[0][1].data.navigate, notification.navigate);
+  listeners.push({ data: { json: () => { throw Error('not JSON'); } }, waitUntil: promise => { task = promise; } }); await task;
+  assert.equal(shown[1][0], 'Agent Box', 'a push it cannot read still shows a notification');
   listeners.notificationclick({ notification: { data: { navigate: notification.navigate }, close() {} }, waitUntil: promise => { task = promise; } }); await task;
-  assert.deepEqual(navigation, [notification.navigate, 'focused']);
+  assert.deepEqual(JSON.parse(JSON.stringify(navigation)), ['focused', { hash: '#/r/r_test0001' }]);
   worker.clients.matchAll = async () => []; navigation.length = 0;
   listeners.notificationclick({ notification: { data: { navigate: notification.navigate }, close() {} }, waitUntil: promise => { task = promise; } }); await task;
   assert.deepEqual(navigation, [notification.navigate]);
-  checks.push('Service worker reads the declarative payload and focuses or opens the notification link');
+  checks.push('Service worker: takes over at once, always shows a notification, focuses an open app and tells it the card, or opens it');
   for (const check of checks) console.log('PASS ' + check);
   if (process.env.APP_CHECK_SHOTS) console.log('PASS four captures saved in docs/app/ (390 × 844, scale 3)');
   console.log('app-check: all checks passed');
