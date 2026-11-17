@@ -650,9 +650,11 @@ case "${1:-help}" in
           case "$node" in /*) ;; *) node="$(cd "$(dirname "$node")" && pwd)/$(basename "$node")" ;; esac
           mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
           path="$(dirname "$node"):$(dirname "$(command -v "$RT" 2>/dev/null || echo /usr/bin/true)"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-          sed -e "s|__LABEL__|$BROKER|" -e "s|__NODE__|$node|" -e "s|__HERE__|$HERE|" -e "s|__PATH__|$path|" \
-              -e "s|__DIR__|$BROKER_DIR|" -e "s|__PORT__|$BROKER_PORT|" -e "s|__CDP_PORT__|$CDP_PORT|" \
-              -e "s|__LOG__|$HOME/Library/Logs/agent-box-broker.log|g" "$HERE/agent-box-broker.plist" > "$BROKER_PLIST"
+          # Paths go in XML-escaped, and with sed's own specials escaped, so one with & or < stays itself.
+          pv() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/[\\&|]/\\&/g'; }
+          sed -e "s|__LABEL__|$BROKER|" -e "s|__NODE__|$(pv "$node")|" -e "s|__HERE__|$(pv "$HERE")|" -e "s|__PATH__|$(pv "$path")|" \
+              -e "s|__DIR__|$(pv "$BROKER_DIR")|" -e "s|__PORT__|$BROKER_PORT|" -e "s|__CDP_PORT__|$CDP_PORT|" \
+              -e "s|__LOG__|$(pv "$HOME/Library/Logs/agent-box-broker.log")|g" "$HERE/agent-box-broker.plist" > "$BROKER_PLIST"
           launchctl bootstrap "gui/$(id -u)" "$BROKER_PLIST"
           for _ in $(seq 50); do broker_js ping && break; sleep 0.1; done
           broker_js ping || { echo "agent-box: the broker didn't start; see ~/Library/Logs/agent-box-broker.log" >&2; exit 1; }

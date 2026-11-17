@@ -160,8 +160,10 @@ function dropValues(r) {
   r.values = {};
 }
 
-// Every status after ready is final.
+// Every status after ready is final, so a request that has ended can't end again: a typing
+// that outlives a cancel must not turn the request into done.
 function finish(r, status) {
+  if (!OPEN.includes(r.status)) return;
   dropValues(r);
   r.status = status;
   r.endedAt = Date.now();
@@ -175,7 +177,11 @@ function sweep() {
   const now = Date.now();
   for (const r of requests) {
     if (r.status === 'pending' && now >= r.expiresAt) finish(r, 'expired');
-    else if (r.status === 'ready' && !r.typing && now >= r.holdUntil) finish(r, 'unused');
+    else if (r.status === 'ready' && now >= r.holdUntil) {
+      // The values go at the deadline even while one is being typed. The typing already has
+      // its own copy; when it ends, the request ends as done, or here as unused.
+      if (r.typing) dropValues(r); else finish(r, 'unused');
+    }
   }
   // An ended request stays a while, so an agent that wasn't waiting still learns how it ended.
   for (let i = requests.length - 1; i >= 0; i--) {
@@ -242,6 +248,10 @@ async function createRequest(body) {
   if (!state.devices.length) refuse(409, 'no_device', 'no phone is paired');
   const page = (await boxPages()).find(t => sameSite(hostOf(t.url), site));
   if (!page) refuse(422, 'no_page', `no page in the box is on ${site}`);
+  // Another call may have made the request while this one looked at the box.
+  const raced = requests.find(r => r.kind === kind && sameSite(r.site, site) && OPEN.includes(r.status));
+  if (raced) return [200, raced];
+  if (!state.devices.length) refuse(409, 'no_device', 'no phone is paired');
   const u = new URL(page.url);
   const now = Date.now();
   const r = { id: `r_${random(8)}`, kind, site, page: { title: String(page.title || '').slice(0, 200), url: (u.origin + u.pathname).slice(0, 500) },
@@ -254,26 +264,50 @@ async function createRequest(body) {
 
 // --- typing -------------------------------------------------------------------
 
-let typingQueue = Promise.resolve();   // one typing at a time, so a value can't be typed twice
+let typingQueue = Promise.resolve();   // one typing at a time
 
-function runTyping(args, value) {
+// What the agent hears about a typing. Never the typing command's own words: box-type
+// names the page by its title, which the page controls and which can hold a value, such
+// as the username on the password step of a sign-in.
+function typingMessage(exit, out, { field, site, enter }) {
+  const input = { username: 'username or email field', password: 'password field', code: 'code field' }[field];
+  if (exit === 0) {
+    const how = out.includes('with the keyboard') ? ' with the keyboard' : '';
+    const short = out.includes('may have rejected some keys')
+      ? ' The field holds a different number of characters than were typed, so the site may have rejected some keys.' : '';
+    return `typed the ${field}${how} into the page on ${site}${enter ? ' and pressed Enter' : ''}.${short}`;
+  }
+  if (exit === 3 && out.includes('--keyboard')) {
+    return "the focus is inside a frame from another site, where the field can't be checked; nothing typed. If that frame is the sign-in form, run again with --keyboard.";
+  }
+  if (exit === 3) return `no page has a ${input} focused; nothing typed. Click the field first (playwright-cli click <ref>), then run this again.`;
+  if (exit === 4) return `more than one page has a ${input} focused; nothing typed. Pick one with --page <part of its address>; agent-box tabs lists the pages.`;
+  if (exit === 5) return `the focused ${input} is on another site, not ${site}; nothing typed.`;
+  return `the typing command failed (exit ${exit}). Check the page before you try again; agent-box doctor checks the box.`;
+}
+
+function runTyping(args, value, about) {
   return new Promise(done => {
     let out = Buffer.alloc(0);
     const child = spawn(TYPE_CMD, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // Kept only to tell the cases of one exit code apart, never passed on.
     const keep = chunk => { if (out.length < 8192) out = Buffer.concat([out, chunk]); };
     child.stdout.on('data', keep);
     child.stderr.on('data', keep);
     const timer = setTimeout(() => child.kill('SIGKILL'), 60_000);
     child.stdin.on('error', () => {});
-    child.on('error', () => { clearTimeout(timer); done({ exit: 1, message: "agent-box broker: couldn't run the typing command" }); });
+    child.on('error', () => { clearTimeout(timer); done({ exit: 1, message: "couldn't run the typing command; see agent-box doctor." }); });
     child.on('close', code => {
       clearTimeout(timer);
-      // Belt and braces: a typing command must never echo the value.
-      const message = out.includes(value) ? 'agent-box broker: the typing command printed the value; its output was dropped' : out.toString('utf8').trim();
+      const exit = Number.isInteger(code) ? code : 1;
+      const message = typingMessage(exit, out.toString('latin1'), about);
       out.fill(0);
-      done({ exit: Number.isInteger(code) ? code : 1, message });
+      done({ exit, message });
     });
-    child.stdin.end(value);
+    // The command gets a copy, zeroed once it is written, so the held value can be dropped
+    // at its deadline without changing what is typed.
+    const copy = Buffer.from(value);
+    child.stdin.end(copy, () => copy.fill(0));
   });
 }
 
@@ -301,8 +335,9 @@ async function typeValue(body) {
     if (body.keyboard === true) args.push('--keyboard');
     r.typing = true;
     let result;
-    try { result = await runTyping(args, value); } finally { r.typing = false; }
-    if (result.exit === 0 && field !== 'username') { finish(r, 'done'); r.seen = true; }
+    try { result = await runTyping(args, value, { field, site: r.site, enter }); } finally { r.typing = false; }
+    // finish() leaves a request that was cancelled meanwhile as it is.
+    if (result.exit === 0 && field !== 'username' && r.status === 'ready') { finish(r, 'done'); r.seen = true; }
     return result;
   });
   typingQueue = run.catch(() => {});
@@ -520,22 +555,23 @@ function phoneState(device) {
 }
 
 function answer(r, body) {
-  const value = (v, what, empty) => {
+  const checked = (v, what, empty) => {
     if (v === undefined && empty) v = '';
     if (typeof v !== 'string') refuse(422, 'invalid', `${what} must be text`);
     if (!v && !empty) refuse(422, 'invalid', `${what} must not be empty`);
     if (v.length > VALUE_MAX) refuse(422, 'invalid', `${what} is longer than ${VALUE_MAX} characters`);
-    return Buffer.from(v, 'utf8');
+    return v;
   };
+  // Every field is checked before any is copied, so a refused answer leaves no Buffer behind.
   if (r.kind === 'credentials') {
-    const password = value(body.password, 'password', false);
-    const username = value(body.username, 'username', true);
-    r.values = { username, password };
+    const password = checked(body.password, 'password', false);
+    const username = checked(body.username, 'username', true);
+    r.values = { username: Buffer.from(username, 'utf8'), password: Buffer.from(password, 'utf8') };
     r.holdUntil = Date.now() + HOLD_MS;
     r.status = 'ready';
     changed();
   } else if (r.kind === 'code') {
-    r.values = { code: value(body.code, 'code', false) };
+    r.values = { code: Buffer.from(checked(body.code, 'code', false), 'utf8') };
     r.holdUntil = Date.now() + CODE_HOLD_MS;
     r.status = 'ready';
     changed();
@@ -644,10 +680,16 @@ async function runService() {
   writeSync(fd, `${process.pid}\n`);
   closeSync(fd);
   const ticker = setInterval(sweep, 250);
-  const shutdown = () => {
+  let stopping = false;
+  const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
     clearInterval(ticker);
     for (const r of requests) dropValues(r);
     for (const server of [agentServer, phoneServer]) { server.close(); server.closeAllConnections(); }
+    // A typing under way has its value already. Let it end (at most 10 s), so it still
+    // empties the password field; a service manager would kill it with the broker.
+    await Promise.race([typingQueue, new Promise(r => setTimeout(r, 10_000))]);
     try { unlinkSync(SOCK); } catch {}
     try { if (readFileSync(PIDFILE, 'utf8').trim() === String(process.pid)) unlinkSync(PIDFILE); } catch {}
     process.exit(0);
@@ -802,7 +844,7 @@ async function type(o, field) {
     stop(7, `no login is held for ${o.site}: it was used, or it ran out. To ask again, run: agent-box login ${o.site}`);
   }
   if (status >= 400) stop(data.error === 'invalid' ? 2 : 1, data.detail || `the broker answered ${status}`);
-  if (data.message) (data.exit === 0 ? console.log : console.error)(data.message);
+  if (data.message) (data.exit === 0 ? say : warn)(data.message);
   if (data.exit === 0) {
     if (field === 'password' && !o.enter) say('submit the form before any snapshot (snapshots show password fields).');
     if (field === 'username') say(`next, click the password field and run: agent-box login ${o.site} --password`);

@@ -20,6 +20,8 @@ const APP = join(TMP, 'app');
 const STANDIN = join(TMP, 'type');
 const TYPED_LOG = join(TMP, 'typed.log');
 const EXIT_FILE = join(TMP, 'type-exit');
+const OUT_FILE = join(TMP, 'type-out');
+const DELAY_FILE = join(TMP, 'type-delay');
 const SOCK = join(DIR, 'agent.sock');
 
 // The test's values. None may show up anywhere but the stand-in's stdin.
@@ -46,14 +48,19 @@ process.stdin.on('end', () => {
   if (args[0] === 'exec') process.exit(0);
   let code = 0;
   try { code = Number(readFileSync(${JSON.stringify(EXIT_FILE)}, 'utf8')); } catch {}
-  console.log(code === 0 ? 'box-type: typed it into stand-in' : 'box-type: no page has that field focused; nothing typed.');
-  process.exit(code);
+  let said = code === 0 ? 'box-type: typed it into stand-in' : 'box-type: no page has that field focused; nothing typed.';
+  try { said = readFileSync(${JSON.stringify(OUT_FILE)}, 'utf8'); } catch {}
+  let delay = 0;
+  try { delay = Number(readFileSync(${JSON.stringify(DELAY_FILE)}, 'utf8')); } catch {}
+  setTimeout(() => { console.log(said); process.exit(code); }, delay);
 });
 `, { mode: 0o755 });
 const typed = () => existsSync(TYPED_LOG) ? readFileSync(TYPED_LOG, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : [];
 const typings = () => typed().filter(t => t.args[0] === 'type-stdin');
 const holds = () => typed().filter(t => t.args[0] === 'exec');
 const typeExit = code => writeFileSync(EXIT_FILE, String(code));
+const typeSays = words => words === null ? rmSync(OUT_FILE, { force: true }) : writeFileSync(OUT_FILE, words);
+const typeTakes = ms => writeFileSync(DELAY_FILE, String(ms));
 const sha = text => createHash('sha256').update(text).digest('hex');
 typeExit(0);
 
@@ -409,7 +416,8 @@ try {
   checks.push('The answer wakes the agent\'s long-poll; asking again while it is ready returns it as it is');
 
   let t = await typeIt('github.com', 'username', { enter: true });
-  assert.deepEqual(t.data, { exit: 0, message: 'box-type: typed it into stand-in' });
+  assert.equal(t.data.exit, 0);
+  assert.ok(!t.data.message.includes('stand-in'), "the typing command's own words are not passed on");
   let last = typings().at(-1);
   assert.deepEqual(last.args, ['type-stdin', '--kind', 'username', '--url', 'github.com']);
   assert.deepEqual([last.bytes, last.sha], [Buffer.byteLength(USER), sha(USER)]);
@@ -465,6 +473,41 @@ try {
   assert.equal((await typeIt('github.com', 'password')).status, 404);
   assert.equal((await getRequest('r_zzzzzzzz')).status, 404);
   checks.push('Deny ends it (the next ask returns the denial once, then asks anew); cancel ends a pending or a ready one and drops its values');
+
+  // The typing command names the page by its title, and a page can put a value there.
+  req = (await ask('credentials', 'github.com')).data.request;
+  p = await answer(PHONE, req.id, { username: 5, password: PASS });
+  assert.deepEqual([p.status, p.data.error], [422, 'invalid']);
+  assert.equal((await getRequest(req.id)).data.request.status, 'pending');
+  await answer(PHONE, req.id, { username: USER, password: PASS });
+  typeSays(`box-type: typed it into github.com: Signed in as ${USER} and pressed Enter`);
+  t = await typeIt('github.com', 'password');
+  typeSays(null);
+  assert.equal(t.data.exit, 0);
+  assert.ok(!t.data.message.includes(USER) && !t.data.message.includes('Signed in as'), t.data.message);
+  assert.match(t.data.message, /^typed the password into the page on github\.com and pressed Enter\.$/);
+  checks.push('The typing command\'s own words, which quote the page\'s title, never reach the agent');
+
+  // A cancel while a value is being typed: the request stays cancelled, with one history line.
+  req = (await ask('credentials', 'github.com')).data.request;
+  await answer(PHONE, req.id, { username: USER, password: PASS });
+  typeTakes(600);
+  const slow = typeIt('github.com', 'password');
+  await sleep(200);
+  a = await agent('POST', `/agent/requests/${req.id}/cancel`);
+  assert.equal(a.data.request.status, 'cancelled');
+  assert.equal((await slow).data.exit, 0);
+  typeTakes(0);
+  assert.equal((await getRequest(req.id)).data.request.status, 'cancelled');
+  let ends = (await phone('GET', '/api/state', { token: PHONE })).data.history.filter(h => h.id === req.id);
+  assert.deepEqual(ends.map(h => h.status), ['cancelled']);
+  // Two calls at once make one request.
+  const both = await Promise.all([ask('handoff', 'github.com', { note: 'Solve the puzzle' }), ask('handoff', 'github.com', { note: 'Solve the puzzle' })]);
+  assert.deepEqual(both.map(b => b.status).sort(), [200, 201]);
+  assert.equal(both[0].data.request.id, both[1].data.request.id);
+  assert.equal((await agent('GET', '/agent/requests?site=github.com')).data.requests.length, 1);
+  await agent('POST', `/agent/requests/${both[0].data.request.id}/cancel`);
+  checks.push('A cancel during a typing stays a cancel; two calls at once make one request; a refused answer changes nothing');
 
   // --- code -------------------------------------------------------------------------------
   let count = pushes.length;
@@ -607,6 +650,26 @@ try {
   const history = (await phone('GET', '/api/state', { token: SHORT })).data.history;
   assert.deepEqual(history.slice(0, 3).map(h => h.status), ['unused', 'unused', 'expired']);
   checks.push('Requests expire; held values are dropped when their hold runs out (status unused)');
+
+  // A typing that is still running when the hold ends. The value is dropped at the deadline;
+  // a typing that lands ends the request as done, one that fails leaves it unused.
+  req = (await ask('credentials', 'github.com')).data.request;
+  await answer(SHORT, req.id, { username: USER, password: PASS });
+  typeTakes(1500);
+  t = await typeIt('github.com', 'password');
+  assert.equal(t.data.exit, 0);
+  assert.deepEqual([typings().at(-1).bytes, typings().at(-1).sha], [Buffer.byteLength(PASS), sha(PASS)]);
+  assert.equal((await getRequest(req.id)).data.request.status, 'done');
+  req = (await ask('credentials', 'github.com')).data.request;
+  await answer(SHORT, req.id, { username: USER, password: PASS });
+  typeExit(3);
+  t = await typeIt('github.com', 'password');
+  typeExit(0); typeTakes(0);
+  assert.equal(t.data.exit, 3);
+  await sleep(400);
+  assert.equal((await getRequest(req.id)).data.request.status, 'unused');
+  assert.equal((await typeIt('github.com', 'password')).status, 404);
+  checks.push('A hold ends on time even during a typing: a typing that lands ends it done, a failed one leaves it unused');
   await stopBroker(broker);
   broker = null;
 

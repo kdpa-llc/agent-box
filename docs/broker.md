@@ -41,12 +41,19 @@ Three kinds of request:
 
 A value is a username, a password or a code that the user sent.
 
-- Values live in the broker's memory, as Buffers that are zeroed when dropped. They are never
-  written to disk, logs, history, error messages or any API response.
+- Values live in the broker's memory only. The broker keeps each as a Buffer and zeroes it when
+  the value is dropped. The request body a value arrived in is a JavaScript string, which the
+  broker doesn't keep and the runtime frees in its own time. Values are never written to disk,
+  logs, history, error messages or any API response.
 - No agent endpoint returns a value. The broker types a value by running
   `agent-box type-stdin` with the value on stdin (see "Typing").
-- Each value is used once. A password or code is dropped as soon as it has been typed (exit 0).
-  The username is dropped with the password. Whatever is left is dropped when its hold runs out.
+- A password or code is typed once: it is dropped as soon as it has been typed (exit 0). The
+  username is dropped with the password, and can be typed again until then, for a field the agent
+  got wrong. Whatever is left is dropped when its hold runs out, also while one is being typed.
+- A typing that has started can't be taken back. A cancel, or the end of the hold, during a typing
+  drops the held values at once; the typing ends by itself, and a cancelled request stays
+  cancelled. When the broker stops, it waits up to 10 seconds for a typing to end, so the password
+  field is still emptied.
 - Holds: `credentials` values for `BOX_BROKER_HOLD_SECONDS` (default 300) after the answer, a
   `code` for 120 seconds.
 
@@ -126,11 +133,13 @@ request changes.
 **`POST /agent/type`** `{ "site", "field": "username" | "password" | "code", "enter"?: boolean, "page"?: string, "keyboard"?: boolean }`
 
 Types the held value for that site into the field the agent focused. Returns
-`{ "exit": <number>, "message": "<what box-type printed>" }` with the exit code of the typing
+`{ "exit": <number>, "message": "<a plain sentence>" }` with the exit code of the typing
 command: 0 typed, 3 no focused field of that kind, 4 more than one page qualifies, 5 the field is
 on another site, 1 anything else. 404 `nothing_held` when no value of that field is held for the
 site, or when the user left the username empty (`detail` says so). `enter` defaults to true for
-`password` and `code`, and is ignored for `username`. One typing runs at a time.
+`password` and `code`, and is ignored for `username`. One typing runs at a time. The message is
+the broker's own sentence for that exit code, never what the typing command printed: `box-type`
+names the page by its title, which the page controls and which can hold a value.
 
 **`GET /agent/status`** returns
 `{ "version", "port", "devices": [{ "id", "name", "push": boolean, "lastSeenAt" }], "pending": <number> }`.
