@@ -1,8 +1,13 @@
 // Phone app checks against a disposable stand-in, using only Node and a fresh Chrome.
 // Run: node tests/app-check.mjs (Node 22+). CHROME_BIN can select the browser.
 // APP_CHECK_SHOTS=1 also saves the four captures in docs/app/.
+// The last part serves the app from the real broker (box-broker.mjs), with stand-ins for the
+// box and the typing command, to check that the two agree on the contract.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
+import { createServer, request } from 'node:http';
 import { mkdtemp, rm, mkdir, writeFile, access } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 import { readFile } from 'node:fs/promises';
@@ -170,6 +175,62 @@ try {
   }
   assert.deepEqual(await evaluate('window.__csp'), []); assert.deepEqual(errors, []); assert.deepEqual(violations, []);
   checks.push('401 forgets the token; every view fits 320/390 in light/dark; no JS or CSP errors');
+  // The same app, served by the real broker: pair, answer a request, and have it typed.
+  {
+    const dir = await mkdtemp('/tmp/abx.');   // short, because the broker's socket path has a length limit
+    try {
+      const user = 'app-check@example.com', pass = 'app-check-Pass-9!';
+      const sha = value => createHash('sha256').update(value).digest('hex');
+      const standin = join(dir, 'type'), typedLog = join(dir, 'typed.log');
+      await writeFile(standin, `#!${process.execPath}
+const chunks = []; process.stdin.on('data', c => chunks.push(c));
+process.stdin.on('end', () => {
+  const sha = require('node:crypto').createHash('sha256').update(Buffer.concat(chunks)).digest('hex');
+  require('node:fs').appendFileSync(${JSON.stringify(typedLog)}, JSON.stringify({ args: process.argv.slice(2), sha }) + '\\n');
+  console.log('box-type: typed it into the stand-in');
+});
+`, { mode: 0o755 });
+      const box = createServer((req, res) => res.writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify([{ type: 'page', title: 'Sign in to Example', url: 'https://example.com/login?next=1' }])));
+      box.listen(0, '127.0.0.1'); await once(box, 'listening');
+      const probe = createServer().listen(0, '127.0.0.1'); await once(probe, 'listening');
+      const port = probe.address().port; probe.close(); await once(probe, 'close');
+      const sock = join(dir, 'b', 'agent.sock');
+      children.push(spawn(process.execPath, [join(root, 'box-broker.mjs'), 'run'], { stdio: 'ignore', env: { ...process.env,
+        BOX_BROKER_DIR: join(dir, 'b'), BOX_BROKER_PORT: String(port), BOX_CDP_PORT: String(box.address().port),
+        BOX_BROKER_TYPE_CMD: standin, BOX_BROKER_APP_DIR: '', BOX_BROKER_APP_URL: '', AGENT_BOX_AS: '' } }));
+      const agent = (method, path, body) => new Promise((resolve, reject) => {
+        const data = body === undefined ? null : Buffer.from(JSON.stringify(body));
+        const req = request({ socketPath: sock, method, path, headers: data ? { 'content-type': 'application/json' } : {} }, res => {
+          let answer = ''; res.on('data', c => { answer += c; });
+          res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(answer || '{}') }));
+        });
+        req.on('error', reject); req.end(data);
+      });
+      await until(async () => { try { return (await agent('GET', '/agent/status')).status === 200; } catch { return false; } }, 'the broker to start');
+      const { code } = (await agent('POST', '/agent/pair')).data;
+      await dimensions(); await cdp('Page.navigate', { url: `http://127.0.0.1:${port}/` }); await has('Pair your phone');
+      await fill('#pair-code', code); await click('button[type=submit]'); await has('Nothing waiting');
+      const made = await agent('POST', '/agent/requests', { kind: 'credentials', site: 'example.com', agent: 'app-check' });
+      assert.equal(made.status, 201);
+      const { id } = made.data.request;
+      await until(() => evaluate(`!!document.getElementById('${id}')`), 'the card from the real broker');
+      const shown = await text();
+      assert.ok(shown.includes('Sign in to Example') && shown.includes('https://example.com/login') && !shown.includes('next=1'));
+      await fill(`#${id}-username`, user); await fill(`#${id}-password`, pass);
+      await click(`#${id} button[type=submit]`); await has('Sent.');
+      assert.equal((await agent('GET', `/agent/requests/${id}?wait=5`)).data.request.status, 'ready');
+      for (const field of ['username', 'password']) assert.equal((await agent('POST', '/agent/type', { site: 'example.com', field })).data.exit, 0);
+      const typed = (await readFile(typedLog, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(typed.map(entry => entry.sha), [sha(user), sha(pass)]);
+      assert.ok(typed[1].args.includes('--clear-after'));
+      await has(' · used · ');
+      assert.equal((await agent('POST', '/agent/type', { site: 'example.com', field: 'password' })).status, 404);
+      assert.deepEqual(await evaluate('window.__csp'), []); assert.deepEqual(errors, []); assert.deepEqual(violations, []);
+      box.close();
+      checks.push('With the real broker: the app pairs, shows the page the broker saw, and its answer is typed once');
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  }
   const listeners = {}; const shown = []; const navigation = [];
   const worker = { location: { origin }, registration: { showNotification: async (...args) => shown.push(args) },
     addEventListener: (name, listener) => { listeners[name] = listener; },
