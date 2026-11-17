@@ -107,7 +107,7 @@ What the exit code tells you:
 | 0    | Done                                    | Run the next command it prints                                                        |
 | 2    | Wrong usage                             | Fix the command                                                                       |
 | 3    | No focused field of the right kind      | Click the field, then run it again; the value is still held                           |
-| 4    | More than one page is on that site      | Add `--page <part of the address>`                                                    |
+| 4    | More than one page has that field focused | Add `--page <part of the address>`                                                  |
 | 5    | No page on that site, or the box is off | Run `agent-box up`, open the sign-in page, then run it again                          |
 | 6    | The user denied it                      | Stop, and ask the user in chat what they want                                         |
 | 7    | It expired, was cancelled, or was used  | Ask again only if the user still wants it                                             |

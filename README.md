@@ -161,7 +161,7 @@ When an agent reaches a sign-in page, it can ask your phone instead of asking yo
 
 ### What a request looks like
 
-An agent runs `agent-box login github.com`. Your phone shows "Sign-in request: Claude wants to sign in to github.com". The app shows the site, and the title and address of the page the box has open, as the broker saw them, not as the agent said. Fill the username and password, or let the keyboard fill them, and tap Send, or tap Deny. The agent then clicks each field and has the broker type it. The broker holds the values in memory for 5 minutes at most, and drops them once the password is typed.
+An agent runs `agent-box login github.com`. Your phone shows "Sign-in request: Claude wants to sign in to github.com". The app shows the site, and the title and address of the page the box has open, as the broker saw them, not as the agent said. Fill the username and password and tap Send, or tap Deny. To fill them from your password manager, tap a field, then the key above the keyboard, and search for the site: the keyboard suggests logins for the app's own address, not for the site the agent is on. The agent then clicks each field and has the broker type it. The broker holds the values in memory for 5 minutes at most, and drops them once the password is typed.
 
 An agent can also ask for a code that came by text or email (`--code`), or for a step only you can do in the viewer, such as a CAPTCHA (`--human`). That card has Open live view, Done and Can't. A request waits 30 minutes for you and keeps the box awake meanwhile.
 

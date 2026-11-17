@@ -183,7 +183,16 @@ try {
   // What the service worker sends when a notification is tapped with the app open.
   await evaluate(`navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { hash: '#/r/${other.id}' } }))`);
   await until(() => evaluate(`document.activeElement.id === '${other.id}'`), 'the service worker message focuses its card');
-  checks.push('A notification link focuses its card once, in an open app, on a cold start and from the service worker');
+  // The tap can arrive before the state that holds its request, as when the app was hidden
+  // and its loop stopped: the target is kept until the card shows.
+  await evaluate('pause()');
+  const early = (await control('add', { kind: 'code' })).request;
+  await evaluate(`navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { hash: '#/r/${early.id}' } }))`);
+  assert.equal(await evaluate(`!!document.getElementById('${early.id}')`), false);
+  assert.equal(await evaluate('location.hash'), '#/');
+  await evaluate('void start()');   // start() only ends with the loop
+  await until(() => evaluate(`document.activeElement.id === '${early.id}'`), 'a card that arrives after its notification was tapped');
+  checks.push('A notification link focuses its card once: in an open app, on a cold start, from the service worker, and when the card arrives late');
   for (const width of [320, 390]) for (const scheme of ['light', 'dark']) {
     await dimensions(width, scheme);
     for (const route of ['#/', '#/settings']) {

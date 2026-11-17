@@ -39,7 +39,7 @@ function clearValues(root) { root.querySelectorAll('input').forEach(field => { f
 function forget() {
   token = null; state = null; generation++; poll?.abort(); localStorage.removeItem('agentbox.token');
   clearValues(main); if (requestsView) clearValues(requestsView);
-  requestsView = null; cards = new Map(); completed.clear(); view = ''; render(); notice();
+  requestsView = null; cards = new Map(); completed.clear(); target = null; view = ''; render(); notice();
 }
 
 async function api(path, body, signal) {
@@ -253,13 +253,19 @@ function countdown() {
   });
   for (const node of cards.values()) node.update?.();
 }
-// A notification's link, #/r/<id>, brings its card into view once. The address then goes back
-// to the list, so a later update doesn't pull the focus out of the card he is typing in.
+// A notification's link, #/r/<id>, brings its card into view once. The address goes back to the
+// list at once, so a later update doesn't pull the focus out of the card he is typing in. The
+// target is kept until its card shows: the tap can arrive before the state that holds the request.
+let target = null;
 function focusRequest() {
-  if (!location.hash.startsWith('#/r/') || !state || view !== 'requests') return;
-  const node = document.getElementById(location.hash.slice(4));
-  history.replaceState(null, '', '#/');
-  if (node) { node.focus({ preventScroll: true }); node.scrollIntoView({ block: 'start' }); }
+  if (location.hash.startsWith('#/r/')) {
+    target = { id: location.hash.slice(4), until: Date.now() + 15000 };
+    history.replaceState(null, '', '#/');
+  }
+  if (!target || !state || view !== 'requests') return;
+  const node = document.getElementById(target.id);
+  if (node) { node.focus({ preventScroll: true }); node.scrollIntoView({ block: 'start' }); target = null; }
+  else if (Date.now() > target.until || completed.has(target.id) || state.history.some(entry => entry.id === target.id)) target = null;
 }
 
 // --- views -----------------------------------------------------------------------

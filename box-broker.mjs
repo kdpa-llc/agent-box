@@ -239,18 +239,22 @@ async function createRequest(body) {
     if (typeof body.viewerUrl !== 'string' || !viewerUrlOk(body.viewerUrl)) refuse(422, 'invalid', 'viewerUrl must be an https:// address or http://127.0.0.1');
     viewerUrl = body.viewerUrl;
   }
-  sweep();
-  const mine = requests.filter(r => r.kind === kind && sameSite(r.site, site));
-  const open = mine.find(r => OPEN.includes(r.status));
-  if (open) return [200, open];
-  const unseen = mine.filter(r => !r.seen && ['denied', 'expired', 'done'].includes(r.status)).at(-1);
-  if (unseen) return [200, unseen];
+  // A request to hand back in place of a new one: one that is open, or one that ended and
+  // whose end no agent has heard yet.
+  const existing = () => {
+    sweep();
+    const mine = requests.filter(r => r.kind === kind && sameSite(r.site, site));
+    return mine.find(r => OPEN.includes(r.status)) || mine.filter(r => !r.seen && ['denied', 'expired', 'done'].includes(r.status)).at(-1);
+  };
+  let found = existing();
+  if (found) return [200, found];
   if (!state.devices.length) refuse(409, 'no_device', 'no phone is paired');
   const page = (await boxPages()).find(t => sameSite(hostOf(t.url), site));
   if (!page) refuse(422, 'no_page', `no page in the box is on ${site}`);
-  // Another call may have made the request while this one looked at the box.
-  const raced = requests.find(r => r.kind === kind && sameSite(r.site, site) && OPEN.includes(r.status));
-  if (raced) return [200, raced];
+  // Another call may have made the request, and the phone may even have answered it, while
+  // this one looked at the box. So check again before making one.
+  found = existing();
+  if (found) return [200, found];
   if (!state.devices.length) refuse(409, 'no_device', 'no phone is paired');
   const u = new URL(page.url);
   const now = Date.now();
@@ -271,13 +275,15 @@ let typingQueue = Promise.resolve();   // one typing at a time
 // as the username on the password step of a sign-in.
 function typingMessage(exit, out, { field, site, enter }) {
   const input = { username: 'username or email field', password: 'password field', code: 'code field' }[field];
+  // The output is read only for lines that start with box-type's own words. The page's title
+  // comes later in a line and can't start one, so a page can't put words in the broker's mouth.
+  const lines = out.split('\n');
   if (exit === 0) {
-    const how = out.includes('with the keyboard') ? ' with the keyboard' : '';
-    const short = out.includes('may have rejected some keys')
+    const short = lines.some(line => /^box-type: warning: the field holds \d+ characters, not \d+;/.test(line))
       ? ' The field holds a different number of characters than were typed, so the site may have rejected some keys.' : '';
-    return `typed the ${field}${how} into the page on ${site}${enter ? ' and pressed Enter' : ''}.${short}`;
+    return `typed the ${field} into the page on ${site}${enter ? ' and pressed Enter' : ''}.${short}`;
   }
-  if (exit === 3 && out.includes('--keyboard')) {
+  if (exit === 3 && lines.some(line => line.startsWith('box-type: the focus is inside a frame from another site'))) {
     return "the focus is inside a frame from another site, where the field can't be checked; nothing typed. If that frame is the sign-in form, run again with --keyboard.";
   }
   if (exit === 3) return `no page has a ${input} focused; nothing typed. Click the field first (playwright-cli click <ref>), then run this again.`;

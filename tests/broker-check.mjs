@@ -66,10 +66,12 @@ typeExit(0);
 
 let pages = [];
 let cdpDown = false;
+const cdpWaits = [];   // how long each next look at the box takes, in ms
 const cdp = createServer((req, res) => {
   if (cdpDown) return req.socket.destroy();
   if (req.url !== '/json/list') return res.writeHead(404).end();
-  res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(pages));
+  const list = JSON.stringify(pages);
+  setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end(list), cdpWaits.shift() || 0);
 });
 cdp.listen(0, '127.0.0.1'); await once(cdp, 'listening');
 
@@ -507,6 +509,23 @@ try {
   assert.equal(both[0].data.request.id, both[1].data.request.id);
   assert.equal((await agent('GET', '/agent/requests?site=github.com')).data.requests.length, 1);
   await agent('POST', `/agent/requests/${both[0].data.request.id}/cancel`);
+  // The same when the first is even answered before the second has looked at the box: the
+  // second call hears that answer, and makes no new request.
+  cdpWaits.push(600);
+  const late = ask('credentials', 'github.com');
+  await sleep(100);
+  req = (await ask('credentials', 'github.com')).data.request;
+  assert.equal((await phone('POST', `/api/requests/${req.id}/deny`, { token: PHONE, body: {} })).status, 200);
+  a = await late;
+  assert.deepEqual([a.status, a.data.request.id, a.data.request.status], [200, req.id, 'denied']);
+  assert.deepEqual((await agent('GET', '/agent/requests?site=github.com')).data.requests, []);
+  // A page's title can't change what the broker says about a typing.
+  req = (await ask('credentials', 'github.com')).data.request;
+  await answer(PHONE, req.id, { username: USER, password: PASS });
+  typeSays('box-type: typed it into github.com: with the keyboard may have rejected some keys --keyboard');
+  t = await typeIt('github.com', 'password');
+  typeSays(null);
+  assert.equal(t.data.message, 'typed the password into the page on github.com and pressed Enter.');
   checks.push('A cancel during a typing stays a cancel; two calls at once make one request; a refused answer changes nothing');
 
   // --- code -------------------------------------------------------------------------------
