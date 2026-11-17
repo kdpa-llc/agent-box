@@ -1,5 +1,6 @@
 // Phone app checks against a disposable stand-in, using only Node and a fresh Chrome.
 // Run: node tests/app-check.mjs (Node 22+). CHROME_BIN can select the browser.
+// APP_CHECK_SHOTS=1 also saves the four captures in docs/app/.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, mkdir, writeFile, access } from 'node:fs/promises';
@@ -80,7 +81,7 @@ try {
   const capture = async (name, selector) => {
     await pause(100); await evaluate(selector ? `document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'start'})` : 'window.scrollTo(0,0)');
     const { data } = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-    await writeFile(join(root, 'docs/app', name), Buffer.from(data, 'base64'));
+    if (process.env.APP_CHECK_SHOTS) await writeFile(join(root, 'docs/app', name), Buffer.from(data, 'base64'));
   };
   await mkdir(join(root, 'docs/app'), { recursive: true });
   await dimensions(); await cdp('Page.navigate', { url: origin }); await has('Pair your phone');
@@ -187,7 +188,7 @@ try {
   assert.deepEqual(navigation, [notification.navigate]);
   checks.push('Service worker reads the declarative payload and focuses or opens the notification link');
   for (const check of checks) console.log('PASS ' + check);
-  console.log('PASS four captures saved in docs/app/ (390 × 844, scale 3)');
+  if (process.env.APP_CHECK_SHOTS) console.log('PASS four captures saved in docs/app/ (390 × 844, scale 3)');
   console.log('app-check: all checks passed');
 } finally {
   ws?.close();

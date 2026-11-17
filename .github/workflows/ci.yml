@@ -42,6 +42,10 @@ jobs:
       - name: Check the login broker
         run: npm run test:broker
 
+      # In a headless Chrome, which GitHub's Ubuntu runners have.
+      - name: Check the phone app
+        run: npm run test:app
+
       - name: Check release notes
         run: npm run check:release-notes
 

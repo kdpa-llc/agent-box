@@ -96,7 +96,13 @@ async function notifications(enable, message) {
       if (!reg) throw new Error();
       const key = state.push.publicKey.replace(/-/g, '+').replace(/_/g, '/');
       const bytes = Uint8Array.from(atob(key), c => c.charCodeAt(0));
-      const subscription = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
+      let subscription = await reg.pushManager.getSubscription();
+      // A subscription made for another broker's key can't receive this broker's pushes.
+      const madeFor = new Uint8Array(subscription?.options.applicationServerKey || []);
+      if (subscription && !(madeFor.length === bytes.length && madeFor.every((byte, i) => byte === bytes[i]))) {
+        await subscription.unsubscribe(); subscription = null;
+      }
+      subscription ||= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
       await api('push/subscribe', { subscription: subscription.toJSON() });
     } else {
       await api('push/unsubscribe', {});
@@ -117,9 +123,9 @@ function pushPanel(settings = false) {
     toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(state.push.subscribed));
     toggle.addEventListener('click', () => notifications(!state.push.subscribed, message)); box.append(toggle);
   }
-  if (settings) box.append(button('Send a test', 'quiet', async () => {
+  if (settings && state.push.subscribed) box.append(button('Send a test', 'quiet', async () => {
     try { await api('push/test', {}); message.textContent = 'Test sent. Check your notifications.'; }
-    catch (error) { message.textContent = failure(error); }
+    catch (error) { message.textContent = error.code === 'not_subscribed' ? 'Turn on notifications first.' : failure(error); }
   }));
   return box;
 }
@@ -209,7 +215,7 @@ function render() {
     main.append(info); view = next; return;
   }
   if (view !== next) {
-    main.replaceChildren(el('h1', 'Requests'));
+    main.replaceChildren(el('h1', 'Requests', 'sr-only'));
     const banner = el('div'); banner.id = 'push-banner';
     const list = el('section'); list.id = 'cards'; list.setAttribute('aria-label', 'Pending requests');
     const history = el('section'); history.id = 'history'; main.append(list, banner, history); cards = new Map();
