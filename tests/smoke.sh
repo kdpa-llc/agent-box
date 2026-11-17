@@ -1,7 +1,8 @@
 #!/bin/bash
 # End-to-end check on a real box: start it, check the viewer needs its password,
 # drive Chromium with playwright-cli, type vault entries into the right page
-# (and refuse the wrong one), download and upload a file, check the time zone
+# (and refuse the wrong one), sign in through the login broker with a fake phone,
+# download and upload a file, check the time zone
 # and keep-awake, restart and check logins survived, then remove the box.
 #
 #   tests/smoke.sh            uses the container tool from setup (or the default)
@@ -39,6 +40,8 @@ cleanup() {
     container) container volume delete "$BOX_VOLUME" >/dev/null 2>&1 || true ;;
     *) "$RT" volume rm "$BOX_VOLUME" >/dev/null 2>&1 || true ;;
   esac
+  if [ -n "${BROKER_PID:-}" ]; then kill "$BROKER_PID" 2>/dev/null || true; fi
+  case "${BOX_BROKER_DIR:-}" in /tmp/abx.*) rm -rf "$BOX_BROKER_DIR" ;; esac
   rm -rf "${WORK:?}"
 }
 trap cleanup EXIT
@@ -100,6 +103,52 @@ pw click "$pass" >/dev/null
 got=$(result "() => { const f = document.querySelector('form input:not([placeholder=user])'); return f.type + ' ' + f.value.length }")
 [ "$got" = '"password 0"' ] || fail "expected an empty password field after the page showed it as text, got $got"
 "$BOX" secret rm "Smoke test" >/dev/null; "$BOX" secret rm "Other site" >/dev/null
+
+step "login: a fake phone answers, and the login lands in tab A once"
+# A broker of its own, on a free port with its own folder (short: socket paths max 104 bytes).
+BOX_BROKER_DIR=$(mktemp -d /tmp/abx.XXXXXX)
+BOX_BROKER_PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+export BOX_BROKER_DIR BOX_BROKER_PORT
+api="http://127.0.0.1:$BOX_BROKER_PORT"
+"$BOX" broker run >"$WORK/broker.log" 2>&1 &
+BROKER_PID=$!
+for _ in $(seq 50); do [ "$(curl -s -o /dev/null -w '%{http_code}' "$api/api/state")" = 401 ] && break; sleep 0.1; done
+code=$("$BOX" broker pair | sed -n 's/^Pairing code: \([A-Z0-9]*\) \([A-Z0-9]*\) .*/\1\2/p')
+[ -n "$code" ] || fail "broker pair printed no code"
+token=$(curl -sf -H 'Content-Type: application/json' -d "{\"code\": \"$code\", \"name\": \"Smoke phone\"}" "$api/api/pair" |
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')
+phone() { curl -sf -H "Authorization: Bearer $token" -H 'Content-Type: application/json' "$@"; }
+result "() => { const f = document.querySelector('[type=password]'); document.querySelector('input').value = ''; f.value = ''; f.form.onsubmit = () => false; return 'reset' }" >/dev/null
+"$BOX" login example.com --as "Smoke test" --wait 60 >"$WORK/login.out" 2>&1 &
+login_pid=$!
+id=""
+for _ in $(seq 50); do
+  id=$(phone "$api/api/state" | python3 -c 'import json, sys; r = json.load(sys.stdin)["requests"]; print(r[0]["id"] if r else "")')
+  [ -z "$id" ] || break; sleep 0.2
+done
+[ -n "$id" ] || fail "the phone never saw the request: $(cat "$WORK/login.out")"
+printf 'smoke-login-%s' "$RANDOM" > login-pw.txt
+phone -d "{\"username\": \"login@example.com\", \"password\": \"$(cat login-pw.txt)\"}" "$api/api/requests/$id/answer" >/dev/null
+rc=0; wait "$login_pid" || rc=$?
+[ "$rc" = 0 ] || fail "login exited $rc: $(cat "$WORK/login.out")"
+"$BOX" status | grep 'kept awake' >/dev/null || fail "the request didn't keep the box awake"
+pw click "$user" >/dev/null; "$BOX" login example.com --username
+pw click "$pass" >/dev/null; "$BOX" login example.com --password --no-enter
+got=$(result "() => document.querySelector('input').value + ' ' + (document.querySelector('[type=password]').value === '$(cat login-pw.txt)')")
+[ "$got" = '"login@example.com true"' ] || fail "login typed the wrong values: $got"
+result "() => { document.querySelector('[type=password]').value = ''; return 'emptied' }" >/dev/null
+rc=0; "$BOX" login example.com --password || rc=$?
+[ "$rc" = 7 ] || fail "a second --password exited $rc, not 7"
+if grep -F "$(cat login-pw.txt)" "$WORK/broker.log" "$WORK/login.out" >/dev/null; then fail "the password showed up in output"; fi
+
+step "login refuses a site with no page (exit 5), and asks no one with no phone paired (exit 8)"
+rc=0; "$BOX" login nowhere.example || rc=$?
+[ "$rc" = 5 ] || fail "no page: exit $rc, not 5"
+"$BOX" broker unpair --all >/dev/null
+rc=0; "$BOX" login example.com || rc=$?
+[ "$rc" = 8 ] || fail "no phone: exit $rc, not 8"
+kill "$BROKER_PID"; BROKER_PID=""
+"$BOX" hold 0 >/dev/null
 
 step "a download lands where agent-box files and get find it"
 result "() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['smoke download'])); a.download = 'smoke-download.txt'; document.body.append(a); a.click(); return 'clicked' }" >/dev/null

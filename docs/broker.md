@@ -101,8 +101,11 @@ JSON in and out. Errors are `{ "error": "<code>", "detail": "<plain sentence>" }
 **`POST /agent/requests`** `{ "kind", "site", "agent"?, "note"?, "viewerUrl"? }`
 
 Returns `{ "request": Request }`: 201 for a new one, 200 when a `pending` or `ready` request of the
-same kind and site exists, which is returned as it is with no second notification. Before making a
-new request the broker checks, and fails without notifying anyone:
+same kind and site exists, which is returned as it is with no second notification. It also returns
+200 with a request of the same kind and site that ended `denied`, `expired` or `done` in the last
+30 minutes when no agent response has carried that end yet. That one is returned once, so an agent
+that stopped waiting (exit 75) still learns the answer by running the same command. Before making
+a new request the broker checks, and fails without notifying anyone:
 
 - 409 `no_device`: no phone is paired.
 - 503 `box_unreachable`: `http://127.0.0.1:$BOX_CDP_PORT/json/list` doesn't answer.
@@ -110,6 +113,9 @@ new request the broker checks, and fails without notifying anyone:
 - 422 `invalid`: a bad kind, site, note or viewerUrl.
 
 A new request sends a push notification to every paired phone that has notifications on.
+
+**`GET /agent/requests?site=<site>`** returns `{ "requests": [Request] }`: the `pending` and `ready`
+requests for that site (all sites without `site`). `agent-box login <site> --cancel` uses it.
 
 **`GET /agent/requests/<id>?wait=<seconds>`** returns `{ "request": Request }` as soon as the status
 is not `pending`, or after `wait` seconds (0 to 300, default 0). 404 `not_found` for an unknown id.
@@ -123,7 +129,8 @@ Types the held value for that site into the field the agent focused. Returns
 `{ "exit": <number>, "message": "<what box-type printed>" }` with the exit code of the typing
 command: 0 typed, 3 no focused field of that kind, 4 more than one page qualifies, 5 the field is
 on another site, 1 anything else. 404 `nothing_held` when no value of that field is held for the
-site. `enter` defaults to true for `password` and `code`, and is ignored for `username`.
+site, or when the user left the username empty (`detail` says so). `enter` defaults to true for
+`password` and `code`, and is ignored for `username`. One typing runs at a time.
 
 **`GET /agent/status`** returns
 `{ "version", "port", "devices": [{ "id", "name", "push": boolean, "lastSeenAt" }], "pending": <number> }`.
@@ -164,7 +171,9 @@ only its SHA-256 and compares in constant time.
 
 `requests` holds the `pending` requests, oldest first. `history` holds the newest 30, newest first.
 `rev` grows by one with every change. With `since` and `wait` (0 to 25), the call returns when
-`rev` is greater than `since`, or after `wait` seconds. With neither it returns at once.
+`rev` is greater than `since`, or after `wait` seconds. With neither it returns at once. `rev`
+starts again at 1 when the broker restarts, so a `since` greater than `rev` also returns at once;
+the app then takes the new `rev`.
 
 **`POST /api/requests/<id>/answer`**, body by kind:
 
@@ -184,12 +193,13 @@ Each value is at most 1024 characters. Returns `{ "ok": true }`. 404 `not_found`
 `invalid`. The broker keeps the request's origin with the subscription, for notification links.
 
 **`POST /api/push/unsubscribe`** `{}` and **`POST /api/push/test`** `{}` return `{ "ok": true }`.
-The test answers 502 `push_failed` with the push service's status in `detail` when it fails.
+The test answers 409 `not_subscribed` when this phone has no subscription, and 502 `push_failed`
+with the push service's status in `detail` when it fails.
 
 **`POST /api/unpair`** `{}` removes this phone and returns `{ "ok": true }`.
 
 Static files: `GET /` is `index.html`, and `GET /<name>` serves the files of `app/` listed under
-"Parts", nothing else. Every response carries `Cache-Control: no-cache`,
+"Parts", nothing else (404 `not_found`; 405 for a method other than GET or HEAD). Every response carries `Cache-Control: no-cache`,
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and, for HTML,
 `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`.
 So the app has no inline scripts or styles and loads nothing from other sites.
@@ -222,8 +232,8 @@ and which `sw.js` reads on other browsers:
 | `handoff`     | Your turn       | `<site>: <note>`                                  |
 | test          | Agent Box       | `Notifications work.`                             |
 
-`navigate` is the subscription's stored origin plus `/#/r/<id>` (`/` for the test). A notification
-never contains a value.
+`navigate` is the subscription's stored origin plus `/#/r/<id>` (`/` for the test, whose `tag` is
+`test`). A notification never contains a value.
 
 ## Typing
 
@@ -270,7 +280,7 @@ Exit codes:
 | 2    | Wrong usage                                                                     |
 | 3    | No focused field of the right kind; nothing typed                               |
 | 4    | More than one page qualifies; add `--page`                                      |
-| 5    | No page on that site in the box, or the focused field is on another site        |
+| 5    | No page on that site in the box (or the box isn't running), or the focused field is on another site |
 | 6    | The user denied it                                                              |
 | 7    | The request expired or was cancelled, or nothing is held for that site          |
 | 8    | The broker isn't running, or no phone is paired; use another way to sign in     |
@@ -287,6 +297,27 @@ agent-box broker unpair <device id>|--all
 agent-box broker test      send a test notification
 agent-box broker run       run in the foreground (what the service runs)
 ```
+
+## Settings
+
+Environment variables, read by the service and the client. `agent-box broker on` writes the first
+three into the launch agent.
+
+| Variable                       | Default                                           |
+| ------------------------------ | ------------------------------------------------- |
+| `BOX_BROKER_DIR`               | `${XDG_CONFIG_HOME:-$HOME/.config}/agent-box/broker`, at most 92 bytes (socket path limit) |
+| `BOX_BROKER_PORT`              | 6070                                              |
+| `BOX_CDP_PORT`                 | 9222, the box's browser control                   |
+| `BOX_BROKER_HOLD_SECONDS`      | 300, how long a username and password are held    |
+| `BOX_BROKER_CODE_HOLD_SECONDS` | 120, how long a code is held                      |
+| `BOX_BROKER_REQUEST_MINUTES`   | 30, how long a request waits for the phone        |
+| `BOX_BROKER_PAIR_MINUTES`      | 10, how long a pairing code works                 |
+| `BOX_BROKER_PUSH_HOSTS`        | none; extra push hosts, for tests                 |
+| `BOX_BROKER_TYPE_CMD`          | the `agent-box` next to the broker                |
+| `BOX_BROKER_APP_DIR`           | `app/` next to the broker                         |
+| `AGENT_BOX_AS`                 | none; the label `login` sends when `--as` is missing |
+
+Times may be fractions, so tests can use short ones. The log never holds a request body.
 
 ## The phone app
 

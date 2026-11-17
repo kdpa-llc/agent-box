@@ -55,6 +55,8 @@ When using Agent Box:
 3. **Keep the Ports Local**: The browser-control port and the viewer listen on 127.0.0.1 only. Don't forward or publish them
 4. **Share the Viewer Privately**: Use Tailscale Serve, which reaches only your tailnet (every device and person its access rules allow), rather than a public tunnel. Never use Tailscale Funnel for the viewer
 5. **Trust Your Agents**: Everything the box can reach, the agents driving it can reach too
+6. **Check the Site Before You Send a Login**: The phone app shows the page the box has open. Deny a request you didn't expect, or one for a site that doesn't match
+7. **Unpair a Lost Phone**: Run `agent-box broker unpair --all`, then pair your phones again
 
 ### For Contributors
 
@@ -92,6 +94,16 @@ When using Agent Box:
 ### The Front Door (macOS)
 
 - `agent-box door on` installs a login service that listens on 127.0.0.1:6080 and starts the box when that address is opened. It starts the box only for a page someone opened (a navigation), not for a request a web page makes in the background
+
+### The Login Broker
+
+- `agent-box broker on` runs a small service on this machine. Agents talk to it over a Unix socket in its own folder (`~/.config/agent-box/broker`, mode 700; the socket is 600). The phone app is served on 127.0.0.1 only, and you publish it to your tailnet with Tailscale Serve. Never use Tailscale Funnel for it
+- A phone pairs with a one-time code that only a program on the machine can make. Each phone gets its own random token, and the broker keeps only its hash. Pairing allows five wrong codes, then needs a new code
+- Logins sent from the phone stay in the broker's memory only. They never go to disk, logs, notifications or the agent, and are zeroed when dropped. They are held for 5 minutes at most (a code for 2), and dropped once the password or code is typed
+- The broker types a value only through `box-type`, so the same site and field checks as `type-secret` apply. The site is the one the request named, and the app shows the page the broker itself saw in the box, not what the agent said
+- The phone API needs a JSON body of at most 16 KB, a matching `Origin`, and a paired phone's token. It serves only the app's own files
+- Notifications go through Apple's or another browser's push service, encrypted, and never contain a value
+- It doesn't protect against a program running as you: such a program can create requests, and can read a password field in the box in the moment after it's filled. Anyone with a paired phone can answer requests
 
 ## Security Updates
 

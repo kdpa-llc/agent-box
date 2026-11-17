@@ -18,6 +18,10 @@ CDP=http://127.0.0.1:$CDP_PORT
 VIEW_LOCAL=http://127.0.0.1:$VIEW_PORT/
 DOOR=local.agent-box.door
 DOOR_PLIST="$HOME/Library/LaunchAgents/$DOOR.plist"
+BROKER=local.agent-box.broker   # the login broker (box-broker.mjs, docs/broker.md)
+BROKER_PLIST="$HOME/Library/LaunchAgents/$BROKER.plist"
+BROKER_DIR=${BOX_BROKER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-box/broker}
+BROKER_PORT=${BOX_BROKER_PORT:-6070}
 SKILL="$HERE/skills/agent-box"
 SKILL_DIRS=("${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills" "$HOME/.agents/skills")   # Claude Code; Codex and other agents
 
@@ -250,12 +254,30 @@ start_box() {
     "$IMAGE" >"$CACHE/run.log" 2>&1 || running || { cat "$CACHE/run.log" >&2; exit 1; }
 }
 
-# Phone viewer address, only once it's published on the tailnet (see README).
-view_tailnet() {
-  "$TS" serve status 2>/dev/null | grep ':8443' >/dev/null || return 1
+# Phone addresses, only once they're published on the tailnet (see README):
+# the viewer on 8443, the login broker's app on 8444.
+ts_host() { "$TS" status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null; }
+tailnet_url() {
+  "$TS" serve status 2>/dev/null | grep ":$1" >/dev/null || return 1
   local host
-  host=$("$TS" status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null) || return 1
-  echo "https://$host:8443/"
+  host=$(ts_host) || return 1
+  echo "https://$host:$1/"
+}
+view_tailnet() { tailnet_url 8443; }
+
+# The login broker. Bash passes what only it knows; box-broker.mjs does the rest.
+node_ok() { command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 20 ]; }
+broker_js() {
+  BOX_BROKER_DIR="$BROKER_DIR" BOX_BROKER_PORT="$BROKER_PORT" BOX_CDP_PORT="$CDP_PORT" BOX_BROKER_TS="$TS" \
+    node "$HERE/box-broker.mjs" "$@"
+}
+broker_app() {   # with the phone app's address, and this machine's tailnet name for the steps
+  BOX_BROKER_APP_URL="$(tailnet_url 8444 || true)" BOX_BROKER_TAILNET_HOST="$(ts_host || true)" broker_js "$@"
+}
+broker_remove() {
+  [ "$OS" = Darwin ] || return 0
+  launchctl bootout "gui/$(id -u)/$BROKER" 2>/dev/null || true
+  rm -f "$BROKER_PLIST"
 }
 
 info() {
@@ -372,6 +394,12 @@ case "${1:-help}" in
       if [ -L "$d/agent-box" ]; then rm "$d/agent-box"; echo "agent-box: removed the skill from $d"; fi
     done
     if door_on; then "$0" door off; fi
+    if [ -f "$BROKER_PLIST" ]; then broker_remove; echo "agent-box: removed the login broker's service"; fi
+    if node_ok; then broker_js stop >/dev/null 2>&1 || true; fi
+    if [ "$all" = 1 ] && [ -d "$BROKER_DIR" ]; then
+      rm -rf "${BROKER_DIR:?}"
+      echo "agent-box: deleted the login broker's paired phones and history"
+    fi
     if [ "$all" = 1 ]; then
       if running; then "$0" down >/dev/null; fi
       ensure_system
@@ -414,7 +442,8 @@ case "${1:-help}" in
       "$RT" stats --no-stream "$NAME" 2>/dev/null || true
     else echo "agent-box: stopped (run 'agent-box up'); container tool: $RT"; fi ;;
   url)
-    echo "$VIEW_LOCAL"; view_tailnet || true ;;
+    echo "$VIEW_LOCAL"; view_tailnet || true
+    if node_ok; then broker_app url 2>/dev/null || true; fi ;;
   shot)
     # Screenshot of the whole desktop, for when the page alone is not enough.
     need_box
@@ -581,6 +610,67 @@ case "${1:-help}" in
       *[!0-9]*) echo "usage: agent-box tidy [minutes] | agent-box tidy log" >&2; exit 2 ;;
       *) in_box -u agent "$NAME" box-tidy run --older-than "${2:-60}" ;;
     esac ;;
+  login)
+    # Ask the user's phone for a sign-in, a code or a step, and type what comes back into
+    # the box without the agent seeing it. See docs/broker.md and box-broker.mjs.
+    shift
+    node_ok || { echo "agent-box: login needs Node 20 or newer; sign in another way (see the agent-box skill)" >&2; exit 8; }
+    cancel=0; human=0
+    for a in "$@"; do case "$a" in --cancel) cancel=1 ;; --human) human=1 ;; esac; done
+    if [ "$cancel" = 0 ] && ! running; then
+      echo "agent-box: the box isn't running. Run agent-box up, open the sign-in page, then run this again" >&2; exit 5
+    fi
+    viewer=""; if [ "$human" = 1 ]; then viewer=$(view_tailnet || true); fi
+    BOX_BROKER_VIEWER_URL="$viewer" broker_js login "$@" ;;
+  type-stdin)
+    # For the login broker: type stdin into the field an agent focused, as
+    # type-secret --from-file does, and exit with box-type's code.
+    #   agent-box type-stdin --kind username|password|totp --url <site> [--enter] [--clear-after N] [--page <text>] [--keyboard]
+    shift; need_box
+    args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --kind|--url|--clear-after|--page) [ $# -ge 2 ] || { echo "agent-box: $1 needs a value" >&2; exit 2; }; args+=("$1" "$2"); shift 2 ;;
+        --enter|--keyboard) args+=("$1"); shift ;;
+        *) echo "agent-box: unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    rc=0
+    in_box -i -u agent "$NAME" env DISPLAY=:1 box-type ${args[@]+"${args[@]}"} || rc=$?
+    exit "$rc" ;;
+  broker)
+    # The login broker: agents ask for a sign-in, the user answers in the phone app.
+    node_ok || { echo "agent-box: the login broker needs Node 20 or newer" >&2; exit 1; }
+    case "${2:-status}" in
+      on)
+        broker_remove
+        broker_js stop >/dev/null 2>&1 || true   # one that agent-box login started
+        if [ "$OS" = Darwin ]; then
+          node=$(command -v node)
+          case "$node" in /*) ;; *) node="$(cd "$(dirname "$node")" && pwd)/$(basename "$node")" ;; esac
+          mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+          path="$(dirname "$node"):$(dirname "$(command -v "$RT" 2>/dev/null || echo /usr/bin/true)"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          sed -e "s|__LABEL__|$BROKER|" -e "s|__NODE__|$node|" -e "s|__HERE__|$HERE|" -e "s|__PATH__|$path|" \
+              -e "s|__DIR__|$BROKER_DIR|" -e "s|__PORT__|$BROKER_PORT|" -e "s|__CDP_PORT__|$CDP_PORT|" \
+              -e "s|__LOG__|$HOME/Library/Logs/agent-box-broker.log|g" "$HERE/agent-box-broker.plist" > "$BROKER_PLIST"
+          launchctl bootstrap "gui/$(id -u)" "$BROKER_PLIST"
+          for _ in $(seq 50); do broker_js ping && break; sleep 0.1; done
+          broker_js ping || { echo "agent-box: the broker didn't start; see ~/Library/Logs/agent-box-broker.log" >&2; exit 1; }
+        else
+          broker_js start
+        fi
+        broker_app status ;;
+      off)
+        broker_remove
+        broker_js stop >/dev/null 2>&1 || true
+        echo "agent-box: broker off. While a phone is paired, an agent's agent-box login starts it again; agent-box broker unpair --all stops that" ;;
+      run)
+        shift 2
+        BOX_BROKER_DIR="$BROKER_DIR" BOX_BROKER_PORT="$BROKER_PORT" BOX_CDP_PORT="$CDP_PORT" exec node "$HERE/box-broker.mjs" run "$@" ;;
+      status|pair|unpair|test)
+        shift; broker_app "$@" ;;
+      *) echo "usage: agent-box broker on|off|status|pair|unpair <device id>|--all|test|run" >&2; exit 2 ;;
+    esac ;;
   pick)
     # agent-box pick "<what to do>" --page <text> [--click]: a fast decision model
     # (Jev through OpenRouter, TypeSafe or OpenAI's gpt-6-luna) picks the element; see box-pick.mjs.
@@ -653,6 +743,13 @@ case "${1:-help}" in
       if [ -n "$script" ] && [ -f "$script" ]; then pass "front door is on"
       else fail "the front door points to an install that's gone" "agent-box door on"; fi
     fi
+    # The login broker is optional: notes only, never a FAIL.
+    if node_ok; then
+      while IFS= read -r line; do [ -z "$line" ] || note "$line"; done < <(broker_app doctor 2>/dev/null || true)
+    fi
+    if [ -f "$BROKER_PLIST" ] && ! grep "$HERE/box-broker.mjs" "$BROKER_PLIST" >/dev/null; then
+      note "the login broker's service points to another install; agent-box broker on fixes it"
+    fi
     free=$(df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1048576) }')
     if [ "$free" -ge 6 ]; then pass "$free GB free on disk"
     else fail "only $free GB free on disk" "free some space: the image needs about 2 GB, and a build up to 5 GB more for a while"; fi
@@ -690,6 +787,9 @@ agent-box runtime  the container tool in use (container, docker or podman)
 agent-box build    rebuild the image with current packages
 agent-box off      stop the box, and the container service or VM if nothing else uses it
 agent-box door on|off   (macOS) always-on helper so the viewer address starts the box itself
+agent-box broker on|off|status|pair|unpair <id>|--all|test
+                   the login broker: agents ask for a sign-in and you answer from
+                   your phone (see the README)
 agent-box setup [--runtime container|docker|podman] [--skills-dir DIR]... [--no-skills]
                    install tools, image and agent skill (re-run after updates)
 agent-box uninstall [--all]   undo setup; --all also deletes logins and passwords
@@ -705,12 +805,22 @@ agent-box type-secret <name> [--username | --totp] [--no-enter] [--page <text>]
                  site only. For passwords it presses Enter, then clears password
                  fields on that page.
 
+Sign-ins from the user's phone (needs agent-box broker on and a paired phone):
+agent-box login <site> [--as <label>]   ask for a username and password, and wait
+agent-box login <site> --username       click the field first; types the username sent
+agent-box login <site> --password [--no-enter]   types the password, then it's gone
+agent-box login <site> --code           ask for a code and type it into the focused field
+agent-box login <site> --human "<what to do>"    ask the user to do a step in the viewer
+agent-box login <site> --cancel         withdraw the request
+                 Exit 75: still waiting, run it again. 6: denied. 8: no phone; sign in
+                 another way.
+
 Agents: read the agent-box skill. In short: `agent-box up`, then
 `playwright-cli -s=<your-session> attach --cdp=<the browser control address it printed>`,
 drive the page (tab-new, find, click, screenshot), close your tab with
 `playwright-cli -s=<your-session> tab-close` as soon as you are done with it,
 and finish with `detach`. Everyone shares the box's memory.
-Never put a password in a command, file or chat: use agent-box type-secret.
+Never put a password in a command, file or chat: use agent-box login or type-secret.
 EOF
     ;;
 esac
